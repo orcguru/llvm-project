@@ -848,6 +848,10 @@ void PPCAsmPrinter::emitInstruction(const MachineInstr *MI) {
         return MCSymbolRefExpr::VariantKind::VK_PPC_AIX_TLSLE;
       if (Model == TLSModel::InitialExec)
         return MCSymbolRefExpr::VariantKind::VK_PPC_AIX_TLSIE;
+      if (Model == TLSModel::LocalDynamic && Subtarget->hasAIXFuncUseTLSIE()) {
+        LLVM_DEBUG(dbgs() << "aix-func-use-tls-initial-exec\n");
+        return MCSymbolRefExpr::VariantKind::VK_PPC_AIX_TLSIE;
+      }
       llvm_unreachable("Only expecting local-exec or initial-exec accesses!");
     }
     // For GD TLS access on AIX, we have two TOC entries for the symbol (one for
@@ -2872,10 +2876,10 @@ void PPCAIXAsmPrinter::emitEndOfAsmFile(Module &M) {
       Name += cast<MCSymbolXCOFF>(I.first.first)->getSymbolTableName();
       MCSymbol *S = OutContext.getOrCreateSymbol(Name);
       TCEntry = cast<MCSectionXCOFF>(
-          getObjFileLowering().getSectionForTOCEntry(S, TM));
+          getObjFileLowering().getSectionForTOCEntry(S, TM, I.first.second));
     } else {
-      TCEntry = cast<MCSectionXCOFF>(
-          getObjFileLowering().getSectionForTOCEntry(I.first.first, TM));
+      TCEntry = cast<MCSectionXCOFF>(getObjFileLowering().getSectionForTOCEntry(
+          I.first.first, TM, I.first.second));
     }
     OutStreamer->switchSection(TCEntry);
 
