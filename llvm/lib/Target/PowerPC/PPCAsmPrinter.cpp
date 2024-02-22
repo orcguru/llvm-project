@@ -848,7 +848,8 @@ void PPCAsmPrinter::emitInstruction(const MachineInstr *MI) {
         return MCSymbolRefExpr::VariantKind::VK_PPC_AIX_TLSLE;
       if (Model == TLSModel::InitialExec)
         return MCSymbolRefExpr::VariantKind::VK_PPC_AIX_TLSIE;
-      if (Model == TLSModel::LocalDynamic && Subtarget->hasAIXFuncUseTLSIE()) {
+      PPCFunctionInfo *FuncInfo = MF->getInfo<PPCFunctionInfo>();
+      if (Model == TLSModel::LocalDynamic && (Subtarget->hasAIXFuncUseTLSIE() || FuncInfo->isAIXFuncUseTLSIE())) {
         LLVM_DEBUG(dbgs() << "aix-func-use-tls-initial-exec\n");
         return MCSymbolRefExpr::VariantKind::VK_PPC_AIX_TLSIE;
       }

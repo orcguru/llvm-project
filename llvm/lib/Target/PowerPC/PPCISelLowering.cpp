@@ -136,6 +136,9 @@ static cl::opt<unsigned> PPCMinimumJumpTableEntries(
     "ppc-min-jump-table-entries", cl::init(64), cl::Hidden,
     cl::desc("Set minimum number of entries to use a jump table on PPC"));
 
+static cl::opt<bool> PPCAIXEnableTLSLDHeuristic("ppc-aix-enable-tlsld-heuristic",
+cl::desc("enable on PPC AIX to use function level TLS-LD/IE settings"), cl::Hidden);
+
 STATISTIC(NumTailCalls, "Number of tail calls");
 STATISTIC(NumSiblingCalls, "Number of sibling calls");
 STATISTIC(ShufflesHandledWithVPERM,
@@ -3368,11 +3371,35 @@ SDValue PPCTargetLowering::LowerGlobalTLSAddressAIX(SDValue Op,
   bool Is64Bit = Subtarget.isPPC64();
   bool HasAIXSmallLocalExecTLS = Subtarget.hasAIXSmallLocalExecTLS();
   TLSModel::Model Model = getTargetMachine().getTLSModel(GV);
-  if (Subtarget.hasAIXFuncUseTLSLD()) {
+  PPCFunctionInfo *FuncInfo = DAG.getMachineFunction().getInfo<PPCFunctionInfo>();
+  if (PPCAIXEnableTLSLDHeuristic && !FuncInfo->isAIXFuncUseInitDone()) {
+    std::set<const GlobalValue *> TLSGV;
+    for (SDNode &Node : DAG.allnodes()) {
+      SDNode *N = &Node;
+      if (N->getOpcode() == ISD::GlobalTLSAddress) {
+        if (GlobalAddressSDNode *GA = cast<GlobalAddressSDNode>(N)) {
+          const GlobalValue *GV = GA->getGlobal();
+          TLSModel::Model Model = getTargetMachine().getTLSModel(GV);
+          if (Model == TLSModel::InitialExec || Model == TLSModel::LocalDynamic) {
+            TLSGV.insert(GV);
+          }
+        }
+      }
+    }
+    LLVM_DEBUG(dbgs() << format("TLSGV count:%d\n", TLSGV.size()));
+    if (TLSGV.size() == 1) {
+      FuncInfo->setAIXFuncUseTLSIE();
+    } else if (TLSGV.size() > 1) {
+      FuncInfo->setAIXFuncUseTLSLD();
+    }
+    FuncInfo->setAIXFuncUseInitDone();
+  }
+
+  if (Subtarget.hasAIXFuncUseTLSLD() || FuncInfo->isAIXFuncUseTLSLD()) {
     LLVM_DEBUG(dbgs() << DAG.getMachineFunction().getName()
                       << " function use TLS-LD\n");
     Model = TLSModel::LocalDynamic;
-  } else if (Subtarget.hasAIXFuncUseTLSIE()) {
+  } else if (Subtarget.hasAIXFuncUseTLSIE() || FuncInfo->isAIXFuncUseTLSIE()) {
     LLVM_DEBUG(dbgs() << DAG.getMachineFunction().getName()
                       << " function use TLS-IE\n");
     Model = TLSModel::InitialExec;
