@@ -3395,13 +3395,13 @@ SDValue PPCTargetLowering::LowerGlobalTLSAddressAIX(SDValue Op,
     FuncInfo->setAIXFuncUseInitDone();
   }
 
-  if (Subtarget.hasAIXFuncUseTLSLD() || FuncInfo->isAIXFuncUseTLSLD()) {
+  if (FuncInfo->isAIXFuncUseTLSLD()) {
     LLVM_DEBUG(dbgs() << DAG.getMachineFunction().getName()
-                      << " function use TLS-LD\n");
+                      << " function use TLS-LD model for TLS IE/LD vars.\n");
     Model = TLSModel::LocalDynamic;
-  } else if (Subtarget.hasAIXFuncUseTLSIE() || FuncInfo->isAIXFuncUseTLSIE()) {
+  } else if (FuncInfo->isAIXFuncUseTLSIE()) {
     LLVM_DEBUG(dbgs() << DAG.getMachineFunction().getName()
-                      << " function use TLS-IE\n");
+                      << " function use TLS-IE model for TLS IE/LD vars.\n");
     Model = TLSModel::InitialExec;
   }
   bool IsTLSLocalExecModel = Model == TLSModel::LocalExec;

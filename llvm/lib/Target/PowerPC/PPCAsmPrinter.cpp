@@ -849,8 +849,9 @@ void PPCAsmPrinter::emitInstruction(const MachineInstr *MI) {
       if (Model == TLSModel::InitialExec)
         return MCSymbolRefExpr::VariantKind::VK_PPC_AIX_TLSIE;
       PPCFunctionInfo *FuncInfo = MF->getInfo<PPCFunctionInfo>();
-      if (Model == TLSModel::LocalDynamic && (Subtarget->hasAIXFuncUseTLSIE() || FuncInfo->isAIXFuncUseTLSIE())) {
-        LLVM_DEBUG(dbgs() << "aix-func-use-tls-initial-exec\n");
+      if (Model == TLSModel::LocalDynamic && FuncInfo->isAIXFuncUseTLSIE()) {
+        LLVM_DEBUG(
+            dbgs() << "Current function use TLS-IE for TLS LD/IE vars.\n");
         return MCSymbolRefExpr::VariantKind::VK_PPC_AIX_TLSIE;
       }
       llvm_unreachable("Only expecting local-exec or initial-exec accesses!");
