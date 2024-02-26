@@ -3371,6 +3371,9 @@ SDValue PPCTargetLowering::LowerGlobalTLSAddressAIX(SDValue Op,
   bool Is64Bit = Subtarget.isPPC64();
   bool HasAIXSmallLocalExecTLS = Subtarget.hasAIXSmallLocalExecTLS();
   TLSModel::Model Model = getTargetMachine().getTLSModel(GV);
+  // Initialize heuristic setting lazily:
+  // (1) Use initial-exec for single TLS var reference within current function.
+  // (2) Use local-dynamic for multiple TLS var references within current func.
   PPCFunctionInfo *FuncInfo = DAG.getMachineFunction().getInfo<PPCFunctionInfo>();
   if (PPCAIXEnableTLSLDHeuristic && !FuncInfo->isAIXFuncUseInitDone()) {
     std::set<const GlobalValue *> TLSGV;

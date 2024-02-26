@@ -150,7 +150,7 @@ private:
   /// to use SExt/ZExt flags in later optimization.
   std::vector<std::pair<Register, ISD::ArgFlagsTy>> LiveInAttrs;
 
-  /// Map to +aix-func-use-tls-local-dynamic/+aix-func-use-tls-initial-exec
+  /// Flags for ppc-aix-enable-tlsld-heuristic.
   bool AIXFuncUseTLSLD = false;
   bool AIXFuncUseTLSIE = false;
   bool AIXFuncUseInitDone = false;

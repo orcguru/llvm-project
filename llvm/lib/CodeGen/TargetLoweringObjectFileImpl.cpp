@@ -2668,7 +2668,8 @@ MCSection *TargetLoweringObjectFileXCOFF::getSectionForTOCEntry(
     const MCSymbolRefExpr::VariantKind VK) const {
   // On AIX, we allow set TLS variable model per function (local-dynamic or
   // initial-exec). In order to allow existence of both models in the same
-  // object, need to rename all local-dynamic accesses by prefix "_$TLSLD.".
+  // object, need to rename all local-dynamic accesses by adding prefix
+  // "_$TLSLD.".
   SmallString<128> NameSV;
   auto RenameForAIXTLSLD = [&](StringRef Name) {
     if (Name.starts_with("_$TLSLD."))
