@@ -122,9 +122,6 @@ cl::desc("don't always align innermost loop to 32 bytes on ppc"), cl::Hidden);
 static cl::opt<bool> UseAbsoluteJumpTables("ppc-use-absolute-jumptables",
 cl::desc("use absolute jump tables on ppc"), cl::Hidden);
 
-static cl::opt<bool> AixSmallLocalDynamicTLS("ppc-aix-small-local-dynamic-tls",
-cl::desc("PPC AIX faster code sequence for TLS-local-dynamic"), cl::Hidden);
-
 static cl::opt<bool>
     DisablePerfectShuffle("ppc-disable-perfect-shuffle",
                           cl::desc("disable vector permute decomposition"),
@@ -3370,6 +3367,7 @@ SDValue PPCTargetLowering::LowerGlobalTLSAddressAIX(SDValue Op,
   EVT PtrVT = getPointerTy(DAG.getDataLayout());
   bool Is64Bit = Subtarget.isPPC64();
   bool HasAIXSmallLocalExecTLS = Subtarget.hasAIXSmallLocalExecTLS();
+  bool HasAIXSmallLocalDynamicTLS = Subtarget.hasAIXSmallLocalDynamicTLS();
   TLSModel::Model Model = getTargetMachine().getTLSModel(GV);
   bool IsTLSLocalExecModel = Model == TLSModel::LocalExec;
 
@@ -3441,6 +3439,14 @@ SDValue PPCTargetLowering::LowerGlobalTLSAddressAIX(SDValue Op,
     SDValue ModuleHandle =
         DAG.getNode(PPCISD::TLSLD_AIX, dl, PtrVT, ModuleHandleTOC);
 
+    if (HasAIXSmallLocalDynamicTLS) {
+      Type *GVType = GV->getValueType();
+      if (GVType->isSized() && !GVType->isEmptyTy() &&
+          GV->getParent()->getDataLayout().getTypeAllocSize(GVType) <=
+              AIXSmallTlsPolicySizeLimit)
+        return DAG.getNode(PPCISD::Lo, dl, PtrVT, VariableOffsetTGA,
+                           ModuleHandle);
+    }
     return DAG.getNode(ISD::ADD, dl, PtrVT, ModuleHandle, VariableOffset);
   }
 

@@ -105,6 +105,10 @@ static MCOperand GetSymbolRef(const MachineOperand &MO, const MCSymbol *Symbol,
     // than a TOC reference. In TOC reference cases, this result is discarded.
     if (Model == TLSModel::LocalExec)
       RefKind = MCSymbolRefExpr::VK_PPC_AIX_TLSLE;
+  } else if (MO.getTargetFlags() == PPCII::MO_TLSLD_FLAG) {
+    TLSModel::Model Model = TM.getTLSModel(MO.getGlobal());
+    if (Model == TLSModel::LocalDynamic)
+      RefKind = MCSymbolRefExpr::VK_PPC_AIX_TLSLD;
   }
 
   const MachineInstr *MI = MO.getParent();

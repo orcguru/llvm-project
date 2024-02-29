@@ -206,7 +206,8 @@ public:
   void EmitTlsCall(const MachineInstr *MI, MCSymbolRefExpr::VariantKind VK);
   void EmitAIXTlsCallHelper(const MachineInstr *MI);
   const MCExpr *getAdjustedLocalExecExpr(const MachineOperand &MO,
-                                         int64_t Offset);
+                                         int64_t Offset,
+                                         MCSymbolRefExpr::VariantKind VK);
   bool runOnMachineFunction(MachineFunction &MF) override {
     Subtarget = &MF.getSubtarget<PPCSubtarget>();
     bool Changed = AsmPrinter::runOnMachineFunction(MF);
@@ -775,6 +776,8 @@ void PPCAsmPrinter::emitInstruction(const MachineInstr *MI) {
   const bool IsPPC64 = Subtarget->isPPC64();
   const bool IsAIX = Subtarget->isAIXABI();
   const bool HasAIXSmallLocalExecTLS = Subtarget->hasAIXSmallLocalExecTLS();
+  const bool HasAIXSmallLocalDynamicTLS =
+      Subtarget->hasAIXSmallLocalDynamicTLS();
   const Module *M = MF->getFunction().getParent();
   PICLevel::Level PL = M->getPICLevel();
 
@@ -1576,11 +1579,11 @@ void PPCAsmPrinter::emitInstruction(const MachineInstr *MI) {
   case PPC::LFD:
   case PPC::STFD:
   case PPC::ADDI8: {
-    // A faster non-TOC-based local-exec sequence is represented by `addi`
-    // or a load/store instruction (that directly loads or stores off of the
-    // thread pointer) with an immediate operand having the MO_TPREL_FLAG.
-    // Such instructions do not otherwise arise.
-    if (!HasAIXSmallLocalExecTLS)
+    // A faster non-TOC-based [local-exec|local-dynamic] sequence is represented
+    // by `addi` or a load/store instruction (that directly loads or stores off
+    // of the thread pointer) with an immediate operand having the
+    // [MO_TPREL_FLAG|MO_TLSLD_FLAG]. Such instructions do not otherwise arise.
+    if (!HasAIXSmallLocalExecTLS && !HasAIXSmallLocalDynamicTLS)
       break;
     bool IsMIADDI8 = MI->getOpcode() == PPC::ADDI8;
     unsigned OpNum = IsMIADDI8 ? 2 : 1;
@@ -1588,10 +1591,13 @@ void PPCAsmPrinter::emitInstruction(const MachineInstr *MI) {
     unsigned Flag = MO.getTargetFlags();
     if (Flag == PPCII::MO_TPREL_FLAG ||
         Flag == PPCII::MO_GOT_TPREL_PCREL_FLAG ||
-        Flag == PPCII::MO_TPREL_PCREL_FLAG) {
+        Flag == PPCII::MO_TPREL_PCREL_FLAG || Flag == PPCII::MO_TLSLD_FLAG) {
       LowerPPCMachineInstrToMCInst(MI, TmpInst, *this);
 
-      const MCExpr *Expr = getAdjustedLocalExecExpr(MO, MO.getOffset());
+      const MCExpr *Expr = getAdjustedLocalExecExpr(
+          MO, MO.getOffset(),
+          (Flag == PPCII::MO_TLSLD_FLAG ? MCSymbolRefExpr::VK_PPC_AIX_TLSLD
+                                        : MCSymbolRefExpr::VK_PPC_AIX_TLSLE));
       if (Expr)
         TmpInst.getOperand(OpNum) = MCOperand::createExpr(Expr);
 
@@ -1627,8 +1633,8 @@ void PPCAsmPrinter::emitInstruction(const MachineInstr *MI) {
 // store. However, the final displacement for these instructions must be
 // between [-32768, 32768), so if the TLS address + its non-zero offset is
 // greater than 32KB, a new MCExpr is produced to accommodate this situation.
-const MCExpr *PPCAsmPrinter::getAdjustedLocalExecExpr(const MachineOperand &MO,
-                                                      int64_t Offset) {
+const MCExpr *PPCAsmPrinter::getAdjustedLocalExecExpr(
+    const MachineOperand &MO, int64_t Offset, MCSymbolRefExpr::VariantKind VK) {
   // Non-zero offsets (for loads, stores or `addi`) require additional handling.
   // When the offset is zero, there is no need to create an adjusted MCExpr.
   if (!Offset)
@@ -1636,7 +1642,8 @@ const MCExpr *PPCAsmPrinter::getAdjustedLocalExecExpr(const MachineOperand &MO,
 
   assert(MO.isGlobal() && "Only expecting a global MachineOperand here!");
   const GlobalValue *GValue = MO.getGlobal();
-  assert(TM.getTLSModel(GValue) == TLSModel::LocalExec &&
+  assert((TM.getTLSModel(GValue) == TLSModel::LocalExec ||
+          TM.getTLSModel(GValue) == TLSModel::LocalDynamic) &&
          "Only local-exec accesses are handled!");
 
   bool IsGlobalADeclaration = GValue->isDeclarationForLinker();
@@ -1657,8 +1664,8 @@ const MCExpr *PPCAsmPrinter::getAdjustedLocalExecExpr(const MachineOperand &MO,
   // non-zero offset to the TLS variable address.
   // For when TLS variables are extern, this is safe to do because we can
   // assume that the address of extern TLS variables are zero.
-  const MCExpr *Expr = MCSymbolRefExpr::create(
-      getSymbol(GValue), MCSymbolRefExpr::VK_PPC_AIX_TLSLE, OutContext);
+  const MCExpr *Expr =
+      MCSymbolRefExpr::create(getSymbol(GValue), VK, OutContext);
   Expr = MCBinaryExpr::createAdd(
       Expr, MCConstantExpr::create(Offset, OutContext), OutContext);
   if (FinalAddress >= 32768) {
