@@ -7582,16 +7582,6 @@ static bool isEligibleToFoldADDIForLocalExecAccesses(SelectionDAG *DAG,
       (ADDIToFold.getMachineOpcode() != PPC::ADDI8))
     return false;
 
-  // The first operand of the ADDIToFold should be the thread pointer.
-  // This transformation is only performed if the first operand of the
-  // addi is the thread pointer.
-  SDValue TPRegNode = ADDIToFold.getOperand(0);
-  RegisterSDNode *TPReg = dyn_cast<RegisterSDNode>(TPRegNode.getNode());
-  const PPCSubtarget &Subtarget =
-      DAG->getMachineFunction().getSubtarget<PPCSubtarget>();
-  if (!TPReg || (TPReg->getReg() != Subtarget.getThreadPointerRegister()))
-    return false;
-
   // The second operand of the ADDIToFold should be the global TLS address
   // (the local-exec TLS variable). We only perform the folding if the TLS
   // variable is the second operand.
@@ -7603,7 +7593,19 @@ static bool isEligibleToFoldADDIForLocalExecAccesses(SelectionDAG *DAG,
   // The local-exec TLS variable should only have the MO_TPREL_FLAG target flag,
   // so this optimization is not performed otherwise if the flag is not set.
   unsigned TargetFlags = GA->getTargetFlags();
-  if (TargetFlags != PPCII::MO_TPREL_FLAG)
+  if (TargetFlags != PPCII::MO_TPREL_FLAG &&
+      TargetFlags != PPCII::MO_TLSLD_FLAG)
+    return false;
+
+  // The first operand of the ADDIToFold should be the thread pointer.
+  // This transformation is only performed if the first operand of the
+  // addi is the thread pointer.
+  SDValue TPRegNode = ADDIToFold.getOperand(0);
+  RegisterSDNode *TPReg = dyn_cast<RegisterSDNode>(TPRegNode.getNode());
+  const PPCSubtarget &Subtarget =
+      DAG->getMachineFunction().getSubtarget<PPCSubtarget>();
+  if (TargetFlags == PPCII::MO_TPREL_FLAG &&
+      (!TPReg || TPReg->getReg() != Subtarget.getThreadPointerRegister()))
     return false;
 
   // If all conditions are satisfied, the ADDI is valid for folding.
@@ -7665,6 +7667,7 @@ static void foldADDIForLocalExecAccesses(SDNode *N, SelectionDAG *DAG) {
 void PPCDAGToDAGISel::PeepholePPC64() {
   SelectionDAG::allnodes_iterator Position = CurDAG->allnodes_end();
   bool HasAIXSmallLocalExecTLS = Subtarget->hasAIXSmallLocalExecTLS();
+  bool HasAIXSmallLocalDynamicTLS = Subtarget->hasAIXSmallLocalDynamicTLS();
 
   while (Position != CurDAG->allnodes_begin()) {
     SDNode *N = &*--Position;
@@ -7676,7 +7679,7 @@ void PPCDAGToDAGISel::PeepholePPC64() {
       reduceVSXSwap(N, CurDAG);
 
     // This optimization is performed for non-TOC-based local-exec accesses.
-    if (HasAIXSmallLocalExecTLS)
+    if (HasAIXSmallLocalExecTLS || HasAIXSmallLocalDynamicTLS)
       foldADDIForLocalExecAccesses(N, CurDAG);
 
     unsigned FirstOp;
