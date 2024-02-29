@@ -122,6 +122,9 @@ cl::desc("don't always align innermost loop to 32 bytes on ppc"), cl::Hidden);
 static cl::opt<bool> UseAbsoluteJumpTables("ppc-use-absolute-jumptables",
 cl::desc("use absolute jump tables on ppc"), cl::Hidden);
 
+static cl::opt<bool> AixSmallLocalDynamicTLS("ppc-aix-small-local-dynamic-tls",
+cl::desc("PPC AIX faster code sequence for TLS-local-dynamic"), cl::Hidden);
+
 static cl::opt<bool>
     DisablePerfectShuffle("ppc-disable-perfect-shuffle",
                           cl::desc("disable vector permute decomposition"),
