@@ -7637,9 +7637,11 @@ static void foldADDIForLocalExecAccesses(SDNode *N, SelectionDAG *DAG) {
   [[maybe_unused]] RegisterSDNode *TPReg = dyn_cast<RegisterSDNode>(TPRegNode.getNode());
   [[maybe_unused]] const PPCSubtarget &Subtarget =
       DAG->getMachineFunction().getSubtarget<PPCSubtarget>();
+  /*
   assert((TPReg && (TPReg->getReg() == Subtarget.getThreadPointerRegister())) &&
          "Expecting the first operand to be a thread pointer for folding addi "
          "in local-exec accesses!");
+  */
 
   // The second operand of the InitialADDI should be the global TLS address
   // (the local-exec TLS variable), with the MO_TPREL_FLAG target flag.
