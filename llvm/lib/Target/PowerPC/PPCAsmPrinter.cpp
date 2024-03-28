@@ -1683,9 +1683,9 @@ const MCExpr *PPCAsmPrinter::getAdjustedLocalExecExpr(const MachineOperand &MO,
   const GlobalValue *GValue = MO.getGlobal();
   // TODO: handle aix-small-local-dynamic-tls none-zero offset case.
   TLSModel::Model Model = TM.getTLSModel(GValue);
-  if (Model == TLSModel::LocalDynamic) {
+  const PPCFunctionInfo *FuncInfo = MF->getInfo<PPCFunctionInfo>();
+  if (Model == TLSModel::LocalDynamic || FuncInfo->isAIXFuncUseTLSLD())
     return nullptr;
-  }
   assert(Model == TLSModel::LocalExec &&
          "Only local-exec accesses are handled!");
 
