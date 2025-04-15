@@ -18910,9 +18910,15 @@ static const MCPhysReg ArgVRM8s[] = {RISCV::V8M8, RISCV::V16M8};
 ArrayRef<MCPhysReg> RISCV::getArgGPRs(const RISCVABI::ABI ABI) {
   // The GPRs used for passing arguments in the ILP32* and LP64* ABIs, except
   // the ILP32E ABI.
-  static const MCPhysReg ArgIGPRs[] = {RISCV::X10, RISCV::X11, RISCV::X12,
-                                       RISCV::X13, RISCV::X14, RISCV::X15,
-                                       RISCV::X16, RISCV::X17};
+  // a0-a2, a6-a7, s2-s11, gp, tp, t0-t1, t3-t6
+  static const MCPhysReg ArgIGPRs[] = {RISCV::X16, RISCV::X17,
+                                       RISCV::X18, RISCV::X19, RISCV::X20,
+                                       RISCV::X21, RISCV::X22, RISCV::X23,
+                                       RISCV::X24, RISCV::X26, RISCV::X27,
+                                       RISCV::X28, RISCV::X29, RISCV::X30,
+                                       RISCV::X31, RISCV::X3,
+                                       RISCV::X4, RISCV::X5, RISCV::X6,
+                                       RISCV::X10, RISCV::X11, RISCV::X12};
   // The GPRs used for passing arguments in the ILP32E/ILP64E ABI.
   static const MCPhysReg ArgEGPRs[] = {RISCV::X10, RISCV::X11, RISCV::X12,
                                        RISCV::X13, RISCV::X14, RISCV::X15};
