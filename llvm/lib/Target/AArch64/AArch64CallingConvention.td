@@ -126,6 +126,12 @@ def CC_AArch64_AAPCS : CallingConv<!listconcat(
 )>;
 
 let Entry = 1 in
+def CC_AArch64_QEMUAOT : CallingConv<[
+  CCIfType<[i32], CCAssignToReg<[W6, W7, W8, W9, W10, W11, W12, W13, W20, W21, W22, W23, W24, W26, W27, W28, W0, W1, W2, W3, W4, W5]>>,  // For arguments
+  CCIfType<[i64], CCAssignToReg<[X6, X7, X8, X9, X10, X11, X12, X13, X20, X21, X22, X23, X24, X26, X27, X28, X0, X1, X2, X3, X4, X5]>>
+]>;
+
+let Entry = 1 in
 def RetCC_AArch64_AAPCS : CallingConv<[
   CCIfType<[iPTR], CCBitConvertToType<i64>>,
   CCIfType<[v2f32], CCBitConvertToType<v2i32>>,
@@ -540,6 +546,10 @@ def CC_AArch64_Preserve_None : CallingConv<[
 
   CCDelegateTo<CC_AArch64_AAPCS>
 ]>;
+
+def CSR_AArch64_QEMUAOT : CalleeSavedRegs<(add X19, LR, FP,
+                                            D8,  D9,  D10, D11,
+                                            D12, D13, D14, D15)>;
 
 // The order of the callee-saves in this file is important, because the
 // FrameLowering code will use this order to determine the layout the
