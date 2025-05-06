@@ -142,6 +142,9 @@ AArch64RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
     return CSR_AArch64_AAPCS_X18_SaveList;
   if (MF->getInfo<AArch64FunctionInfo>()->isSVECC())
     return CSR_AArch64_SVE_AAPCS_SaveList;
+  if (MF->getFunction().getCallingConv() == CallingConv::AArch64_QEMUAOT ||
+      MF->getFunction().getCallingConv() == CallingConv::AArch64_QEMUAOT_RAX_RDX)
+    return CSR_AArch64_QEMUAOT_SaveList;
   return CSR_AArch64_AAPCS_SaveList;
 }
 

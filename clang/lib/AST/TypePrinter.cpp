@@ -1074,6 +1074,9 @@ void TypePrinter::printFunctionAfter(const FunctionType::ExtInfo &Info,
     case CC_AArch64SVEPCS:
       OS << "__attribute__((aarch64_sve_pcs))";
       break;
+    case CC_AArch64QEMUAOT:
+      OS << "__attribute__((aarch64_qemuaot))";
+      break;
     case CC_AMDGPUKernelCall:
       OS << "__attribute__((amdgpu_kernel))";
       break;
@@ -1996,6 +1999,7 @@ void TypePrinter::printAttributedAfter(const AttributedType *T,
   }
   case attr::AArch64VectorPcs: OS << "aarch64_vector_pcs"; break;
   case attr::AArch64SVEPcs: OS << "aarch64_sve_pcs"; break;
+  case attr::AArch64QEMUAOT: OS << "aarch64_qemuaot"; break;
   case attr::AMDGPUKernelCall: OS << "amdgpu_kernel"; break;
   case attr::IntelOclBicc: OS << "inteloclbicc"; break;
   case attr::PreserveMost:

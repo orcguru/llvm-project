@@ -293,6 +293,7 @@ namespace clang {
     CC_PreserveAll,       // __attribute__((preserve_all))
     CC_AArch64VectorCall, // __attribute__((aarch64_vector_pcs))
     CC_AArch64SVEPCS,     // __attribute__((aarch64_sve_pcs))
+    CC_AArch64QEMUAOT,     // __attribute__((aarch64_qemuaot))
     CC_AMDGPUKernelCall,  // __attribute__((amdgpu_kernel))
     CC_M68kRTD,           // __attribute__((m68k_rtd))
     CC_PreserveNone,      // __attribute__((preserve_none))

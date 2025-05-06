@@ -2692,6 +2692,11 @@ def AArch64SVEPcs: DeclOrTypeAttr {
   let Documentation = [AArch64SVEPcsDocs];
 }
 
+def AArch64QEMUAOT: DeclOrTypeAttr {
+  let Spellings = [Clang<"aarch64_qemuaot">];
+  let Documentation = [AArch64SVEPcsDocs];
+}
+
 def ArmStreaming : TypeAttr, TargetSpecificAttr<TargetAArch64> {
   let Spellings = [RegularKeyword<"__arm_streaming">];
   let Subjects = SubjectList<[HasFunctionProto], ErrorDiag>;

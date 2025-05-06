@@ -7233,6 +7233,8 @@ CCAssignFn *AArch64TargetLowering::CCAssignFnForCall(CallingConv::ID CC,
     return CC_AArch64_Arm64EC_Thunk_Native;
   case CallingConv::AArch64_QEMUAOT:
     return CC_AArch64_QEMUAOT;
+  case CallingConv::AArch64_QEMUAOT_RAX_RDX:
+    return CC_AArch64_QEMUAOT;
   }
 }
 
@@ -7241,6 +7243,8 @@ AArch64TargetLowering::CCAssignFnForReturn(CallingConv::ID CC) const {
   switch (CC) {
   default:
     return RetCC_AArch64_AAPCS;
+  case CallingConv::AArch64_QEMUAOT_RAX_RDX:
+    return RetCC_AArch64_QEMUAOT_RAX_RDX;
   case CallingConv::ARM64EC_Thunk_X64:
     return RetCC_AArch64_Arm64EC_Thunk;
   case CallingConv::CFGuard_Check:
@@ -7868,7 +7872,7 @@ SDValue AArch64TargetLowering::LowerCallResult(
 static bool canGuaranteeTCO(CallingConv::ID CC, bool GuaranteeTailCalls) {
   return (CC == CallingConv::Fast && GuaranteeTailCalls) ||
          CC == CallingConv::Tail || CC == CallingConv::SwiftTail ||
-         CC == CallingConv::AArch64_QEMUAOT;
+         CC == CallingConv::AArch64_QEMUAOT || CC == CallingConv::AArch64_QEMUAOT_RAX_RDX;
 }
 
 /// Return true if we might ever do TCO for calls with this calling convention.
@@ -7884,6 +7888,7 @@ static bool mayTailCallThisCC(CallingConv::ID CC) {
   case CallingConv::Tail:
   case CallingConv::Fast:
   case CallingConv::AArch64_QEMUAOT:
+  case CallingConv::AArch64_QEMUAOT_RAX_RDX:
     return true;
   default:
     return false;
