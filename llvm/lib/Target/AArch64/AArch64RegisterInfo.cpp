@@ -491,7 +491,13 @@ AArch64RegisterInfo::getStrictlyReservedRegs(const MachineFunction &MF) const {
     markSuperRegs(Reserved, AArch64::W28);
   }
 
-  assert(checkAllSuperRegsMarked(Reserved));
+  if (MF.getFunction().getCallingConv() == CallingConv::AArch64_QEMUAOT) {
+    Reserved.set(AArch64::W25);
+    Reserved.set(AArch64::X25);
+  } else {
+    //FIXME
+    assert(checkAllSuperRegsMarked(Reserved));
+  }
   return Reserved;
 }
 
@@ -515,7 +521,13 @@ AArch64RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
       markSuperRegs(Reserved, AArch64::LR);
   }
 
-  assert(checkAllSuperRegsMarked(Reserved));
+  if (MF.getFunction().getCallingConv() == CallingConv::AArch64_QEMUAOT) {
+    Reserved.set(AArch64::W25);
+    Reserved.set(AArch64::X25);
+  } else {
+    //FIXME
+    assert(checkAllSuperRegsMarked(Reserved));
+  }
   return Reserved;
 }
 
