@@ -273,9 +273,6 @@ namespace CallingConv {
     /// The special calling convention for QEMU-AOT
     AArch64_QEMUAOT = 112,
 
-    /// The special calling convention with fixed return positions
-    AArch64_QEMUAOT_RAX_RDX = 113,
-
     /// The highest possible ID. Must be some 2^k - 1.
     MaxID = 1023
   };

@@ -58,7 +58,7 @@ bool CC_AArch64_GHC(unsigned ValNo, MVT ValVT, MVT LocVT,
 bool CC_AArch64_Preserve_None(unsigned ValNo, MVT ValVT, MVT LocVT,
                               CCValAssign::LocInfo LocInfo,
                               ISD::ArgFlagsTy ArgFlags, CCState &State);
-bool RetCC_AArch64_QEMUAOT_RAX_RDX(unsigned ValNo, MVT ValVT, MVT LocVT,
+bool RetCC_AArch64_QEMUAOT(unsigned ValNo, MVT ValVT, MVT LocVT,
                          CCValAssign::LocInfo LocInfo, ISD::ArgFlagsTy ArgFlags,
                          CCState &State);
 bool RetCC_AArch64_AAPCS(unsigned ValNo, MVT ValVT, MVT LocVT,

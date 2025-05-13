@@ -152,9 +152,9 @@ def CC_AArch64_QEMUAOT : CallingConv<[
 ]>;
 
 let Entry = 1 in
-def RetCC_AArch64_QEMUAOT_RAX_RDX : CallingConv<[
-  CCIfType<[i32], CCAssignToReg<[W6, W8]>>,
-  CCIfType<[i64], CCAssignToReg<[X6, X8]>>
+def RetCC_AArch64_QEMUAOT : CallingConv<[
+  CCIfType<[i32], CCAssignToReg<[W5]>>,
+  CCIfType<[i64], CCAssignToReg<[X5]>>
 ]>;
 
 let Entry = 1 in
