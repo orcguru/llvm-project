@@ -147,8 +147,8 @@ def CC_AArch64_QEMUAOT : CallingConv<[
 //#define CONTEXT_CC_SRC    TCG_REG_X0
 //#define CONTEXT_CC_DST    TCG_REG_X1
 //#define CONTEXT_CC_OP     TCG_REG_X2
-  CCIfType<[i32], CCAssignToReg<[W6, W7, W8, W9, W10, W11, W12, W13, W20, W21, W22, W23, W24, W26, W27, W28, W0, W1, W2, W3, W4, W5]>>,  // For arguments
-  CCIfType<[i64], CCAssignToReg<[X6, X7, X8, X9, X10, X11, X12, X13, X20, X21, X22, X23, X24, X26, X27, X28, X0, X1, X2, X3, X4, X5]>>
+  CCIfType<[i32], CCAssignToReg<[W6, W7, W8, W9, W10, W11, W12, W13, W20, W21, W22, W23, W24, W26, W27, W28, W0, W1, W2, W3, W4, W5, W14]>>,  // For arguments
+  CCIfType<[i64], CCAssignToReg<[X6, X7, X8, X9, X10, X11, X12, X13, X20, X21, X22, X23, X24, X26, X27, X28, X0, X1, X2, X3, X4, X5, X14]>>
 ]>;
 
 let Entry = 1 in
