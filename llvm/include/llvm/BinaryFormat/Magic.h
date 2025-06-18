@@ -28,6 +28,7 @@ struct file_magic {
     elf_executable,    ///< ELF Executable image
     elf_shared_object, ///< ELF dynamically linked shared lib
     elf_core,          ///< ELF core image
+    elf_aot,           ///< ELF aot file
     goff_object,       ///< GOFF object file
     macho_object,      ///< Mach-O Object file
     macho_executable,  ///< Mach-O Executable

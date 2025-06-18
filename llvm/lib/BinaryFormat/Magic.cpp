@@ -127,6 +127,9 @@ file_magic llvm::identify_magic(StringRef Magic) {
         case 4:
           return file_magic::elf_core;
         }
+      } else if ((unsigned char)Magic[high] == 0xFE &&
+                 (unsigned char)Magic[low] == 0x01) {
+        return file_magic::elf_aot;
       }
       // It's still some type of ELF file.
       return file_magic::elf;

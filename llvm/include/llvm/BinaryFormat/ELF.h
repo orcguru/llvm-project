@@ -119,6 +119,7 @@ enum {
   ET_DYN = 3,         // Shared object file
   ET_CORE = 4,        // Core file
   ET_LOOS = 0xfe00,   // Beginning of operating system-specific codes
+  ET_AOT = 0xfe01,    // For AOT
   ET_HIOS = 0xfeff,   // Operating system-specific
   ET_LOPROC = 0xff00, // Beginning of processor-specific codes
   ET_HIPROC = 0xffff  // Processor-specific

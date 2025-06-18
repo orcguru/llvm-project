@@ -461,6 +461,7 @@ createLinkGraphFromObject(MemoryBufferRef ObjectBuffer) {
   case file_magic::macho_object:
     return createLinkGraphFromMachOObject(ObjectBuffer);
   case file_magic::elf_relocatable:
+  case file_magic::elf_aot:
     return createLinkGraphFromELFObject(ObjectBuffer);
   case file_magic::coff_object:
     return createLinkGraphFromCOFFObject(ObjectBuffer);

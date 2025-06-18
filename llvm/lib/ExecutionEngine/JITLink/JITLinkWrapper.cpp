@@ -22,6 +22,7 @@ using namespace llvm::object;
 
 extern "C" {
 void invoke_jitlink(const char *AotFile) {
+  std::cout << "invoke_jitlink begin\n" << std::flush;
   std::string InputFile = AotFile;
   auto F = MemoryBuffer::getFile(InputFile);
   if (!F) {
@@ -33,6 +34,6 @@ void invoke_jitlink(const char *AotFile) {
     std::cerr << "Failed createLinkGrpahFromObject\n";
     return;
   }
-  std::cout << "invoke_jitlink done\n";
+  std::cout << "invoke_jitlink done\n" << std::flush;
 }
 }

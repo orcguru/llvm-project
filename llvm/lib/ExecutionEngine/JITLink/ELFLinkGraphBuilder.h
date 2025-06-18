@@ -82,7 +82,8 @@ protected:
   using ELFSymbolIndex = unsigned;
 
   bool isRelocatable() const {
-    return Obj.getHeader().e_type == llvm::ELF::ET_REL;
+    return Obj.getHeader().e_type == llvm::ELF::ET_REL ||
+      Obj.getHeader().e_type == llvm::ELF::ET_AOT;
   }
 
   void setGraphBlock(ELFSectionIndex SecIndex, Block *B) {
