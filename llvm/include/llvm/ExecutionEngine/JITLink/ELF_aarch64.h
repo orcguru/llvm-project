@@ -33,6 +33,8 @@ createLinkGraphFromELFObject_aarch64(MemoryBufferRef ObjectBuffer);
 void link_ELF_aarch64(std::unique_ptr<LinkGraph> G,
                       std::unique_ptr<JITLinkContext> Ctx);
 
+void link_AOT_ELF_aarch64(std::unique_ptr<LinkGraph> G,
+                      std::unique_ptr<JITLinkContext> Ctx);
 } // end namespace jitlink
 } // end namespace llvm
 

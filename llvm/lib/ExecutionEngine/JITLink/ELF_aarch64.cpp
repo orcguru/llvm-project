@@ -640,5 +640,20 @@ void link_ELF_aarch64(std::unique_ptr<LinkGraph> G,
   ELFJITLinker_aarch64::link(std::move(Ctx), std::move(G), std::move(Config));
 }
 
+void link_AOT_ELF_aarch64(std::unique_ptr<LinkGraph> G,
+                      std::unique_ptr<JITLinkContext> Ctx) {
+  PassConfiguration Config;
+  const Triple &TT = G->getTargetTriple();
+  if (Ctx->shouldAddDefaultTargetPasses(TT)) {
+    // Add an in-place GOT/TLS/Stubs build pass.
+    Config.PostPrunePasses.push_back(buildTables_ELF_aarch64);
+  }
+
+  if (auto Err = Ctx->modifyPassConfig(*G, Config))
+    return Ctx->notifyFailed(std::move(Err));
+
+  ELFJITLinker_aarch64::link(std::move(Ctx), std::move(G), std::move(Config));
+}
+
 } // namespace jitlink
 } // namespace llvm

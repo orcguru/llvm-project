@@ -6,6 +6,7 @@ add_llvm_component_library(LLVMJITLink
   DWARFRecordSectionSplitter.cpp
   EHFrameSupport.cpp
   JITLink.cpp
+  JITLinkWrapper.cpp
   JITLinkGeneric.cpp
   JITLinkMemoryManager.cpp
 
