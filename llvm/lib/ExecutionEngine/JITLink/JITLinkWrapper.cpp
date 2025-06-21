@@ -113,15 +113,6 @@ static cl::opt<uint64_t> SlabPageSize(
     cl::desc("Set page size for slab (requires -slab-allocate and -noexec)"),
     cl::init(0), cl::cat(JITLinkCategory));
 
-static cl::opt<std::string>
-    OrcRuntime("orc-runtime", cl::desc("Use ORC runtime from given path"),
-               cl::init(""), cl::cat(JITLinkCategory));
-
-static cl::opt<bool> AddSelfRelocations(
-    "add-self-relocations",
-    cl::desc("Add relocations to function pointers to the current function"),
-    cl::init(false), cl::cat(JITLinkCategory));
-
 static ExitOnError ExitOnErr;
 
 static LLVM_ATTRIBUTE_USED void linkComponents() {
@@ -135,8 +126,6 @@ llvm_jitlink_setTestResultOverride(int64_t Value) {
   TestResultOverride = Value;
   UseTestResultOverride = true;
 }
-
-static Error addSelfRelocations(LinkGraph &G);
 
 namespace {
 
@@ -263,74 +252,6 @@ static Error applyHarnessPromotions(Session &S, LinkGraph &G) {
     G.makeExternal(*Sym);
 
   return Error::success();
-}
-
-static void dumpSectionContents(raw_ostream &OS, LinkGraph &G) {
-  constexpr orc::ExecutorAddrDiff DumpWidth = 16;
-  static_assert(isPowerOf2_64(DumpWidth), "DumpWidth must be a power of two");
-
-  // Put sections in address order.
-  std::vector<Section *> Sections;
-  for (auto &S : G.sections())
-    Sections.push_back(&S);
-
-  llvm::sort(Sections, [](const Section *LHS, const Section *RHS) {
-    if (LHS->symbols().empty() && RHS->symbols().empty())
-      return false;
-    if (LHS->symbols().empty())
-      return false;
-    if (RHS->symbols().empty())
-      return true;
-    SectionRange LHSRange(*LHS);
-    SectionRange RHSRange(*RHS);
-    return LHSRange.getStart() < RHSRange.getStart();
-  });
-
-  for (auto *S : Sections) {
-    OS << S->getName() << " content:";
-    if (S->symbols().empty()) {
-      OS << "\n  section empty\n";
-      continue;
-    }
-
-    // Sort symbols into order, then render.
-    std::vector<Symbol *> Syms(S->symbols().begin(), S->symbols().end());
-    llvm::sort(Syms, [](const Symbol *LHS, const Symbol *RHS) {
-      return LHS->getAddress() < RHS->getAddress();
-    });
-
-    orc::ExecutorAddr NextAddr(Syms.front()->getAddress().getValue() &
-                               ~(DumpWidth - 1));
-    for (auto *Sym : Syms) {
-      bool IsZeroFill = Sym->getBlock().isZeroFill();
-      auto SymStart = Sym->getAddress();
-      auto SymSize = Sym->getSize();
-      auto SymEnd = SymStart + SymSize;
-      const uint8_t *SymData = IsZeroFill ? nullptr
-                                          : reinterpret_cast<const uint8_t *>(
-                                                Sym->getSymbolContent().data());
-
-      // Pad any space before the symbol starts.
-      while (NextAddr != SymStart) {
-        if (NextAddr % DumpWidth == 0)
-          OS << formatv("\n{0:x16}:", NextAddr);
-        OS << "   ";
-        ++NextAddr;
-      }
-
-      // Render the symbol content.
-      while (NextAddr != SymEnd) {
-        if (NextAddr % DumpWidth == 0)
-          OS << formatv("\n{0:x16}:", NextAddr);
-        if (IsZeroFill)
-          OS << " 00";
-        else
-          OS << formatv(" {0:x-2}", SymData[NextAddr - SymStart]);
-        ++NextAddr;
-      }
-    }
-    OS << "\n";
-  }
 }
 
 // A memory mapper with a fake offset applied only used for -noexec testing
@@ -651,54 +572,7 @@ Session::Session(std::unique_ptr<ExecutorProcessControl> EPC, Error &Err)
 
   auto &TT = ES.getTargetTriple();
 
-  // Set up the platform.
-  if (!OrcRuntime.empty()) {
-    assert(ProcessSymsJD && "ProcessSymsJD should have been set");
-    PlatformJD = &ES.createBareJITDylib("Platform");
-    PlatformJD->addToLinkOrder(*ProcessSymsJD);
-
-    if (TT.isOSBinFormatMachO()) {
-      if (auto P = MachOPlatform::Create(ES, ObjLayer, *PlatformJD,
-                                         OrcRuntime.c_str()))
-        ES.setPlatform(std::move(*P));
-      else {
-        Err = P.takeError();
-        return;
-      }
-    } else if (TT.isOSBinFormatELF()) {
-      if (auto P = ELFNixPlatform::Create(ES, ObjLayer, *PlatformJD,
-                                          OrcRuntime.c_str()))
-        ES.setPlatform(std::move(*P));
-      else {
-        Err = P.takeError();
-        return;
-      }
-    } else if (TT.isOSBinFormatCOFF()) {
-      auto LoadDynLibrary = [&, this](JITDylib &JD,
-                                      StringRef DLLName) -> Error {
-        if (!DLLName.ends_with_insensitive(".dll"))
-          return make_error<StringError>("DLLName not ending with .dll",
-                                         inconvertibleErrorCode());
-        return loadAndLinkDynamicLibrary(JD, DLLName);
-      };
-
-      if (auto P = COFFPlatform::Create(ES, ObjLayer, *PlatformJD,
-                                        OrcRuntime.c_str(),
-                                        std::move(LoadDynLibrary)))
-        ES.setPlatform(std::move(*P));
-      else {
-        Err = P.takeError();
-        return;
-      }
-    } else {
-      Err = make_error<StringError>(
-          "-" + OrcRuntime.ArgStr + " specified, but format " +
-              Triple::getObjectFormatTypeName(TT.getObjectFormat()) +
-              " not supported",
-          inconvertibleErrorCode());
-      return;
-    }
-  } else if (TT.isOSBinFormatELF()) {
+  if (TT.isOSBinFormatELF()) {
     if (!NoExec)
       ObjLayer.addPlugin(std::make_unique<EHFrameRegistrationPlugin>(
           ES, ExitOnErr(EPCEHFrameRegistrar::Create(this->ES))));
@@ -738,9 +612,6 @@ void Session::modifyPassConfig(const Triple &TT,
                                PassConfiguration &PassConfig) {
   PassConfig.PrePrunePasses.push_back(
       [this](LinkGraph &G) { return applyHarnessPromotions(*this, G); });
-
-  if (AddSelfRelocations)
-    PassConfig.PostPrunePasses.push_back(addSelfRelocations);
 }
 
 Expected<JITDylib *> Session::getOrLoadDynamicLibrary(StringRef LibPath) {
@@ -1021,10 +892,6 @@ static Error sanitizeArguments(const Triple &TT, const char *ArgV0) {
   if (EntryPointName.empty())
     EntryPointName = TT.getObjectFormat() == Triple::MachO ? "_main" : "main";
 
-  if (!OrcRuntime.empty() && NoProcessSymbols)
-    return make_error<StringError>("-orc-runtime requires process symbols",
-                                   inconvertibleErrorCode());
-
   // If -slab-address is passed, require -slab-allocate and -noexec
   if (SlabAddress != ~0ULL) {
     if (SlabAllocateSizeString == "" || !NoExec)
@@ -1144,28 +1011,6 @@ static Error addObjects(Session &S,
   return Error::success();
 }
 
-static Expected<MaterializationUnit::Interface>
-getObjectFileInterfaceHidden(ExecutionSession &ES, MemoryBufferRef ObjBuffer) {
-  auto I = getObjectFileInterface(ES, ObjBuffer);
-  if (I) {
-    for (auto &KV : I->SymbolFlags)
-      KV.second &= ~JITSymbolFlags::Exported;
-  }
-  return I;
-}
-
-static SmallVector<StringRef, 5> getSearchPathsFromEnvVar(Session &S) {
-  // FIXME: Handle EPC environment.
-  SmallVector<StringRef, 5> PathVec;
-  auto TT = S.ES.getTargetTriple();
-  if (TT.isOSBinFormatCOFF())
-    StringRef(getenv("PATH")).split(PathVec, ";");
-  else if (TT.isOSBinFormatELF())
-    StringRef(getenv("LD_LIBRARY_PATH")).split(PathVec, ":");
-
-  return PathVec;
-}
-
 static Error addSessionInputs(Session &S) {
   std::map<unsigned, JITDylib *> IdxToJD;
 
@@ -1192,92 +1037,8 @@ struct TargetInfo {
 };
 } // anonymous namespace
 
-static TargetInfo
-getTargetInfo(const Triple &TT,
-              const SubtargetFeatures &TF = SubtargetFeatures()) {
-  auto TripleName = TT.str();
-  std::string ErrorStr;
-  const Target *TheTarget = TargetRegistry::lookupTarget(TripleName, ErrorStr);
-  if (!TheTarget)
-    ExitOnErr(make_error<StringError>("Error accessing target '" + TripleName +
-                                          "': " + ErrorStr,
-                                      inconvertibleErrorCode()));
-
-  std::unique_ptr<MCSubtargetInfo> STI(
-      TheTarget->createMCSubtargetInfo(TripleName, "", TF.getString()));
-  if (!STI)
-    ExitOnErr(
-        make_error<StringError>("Unable to create subtarget for " + TripleName,
-                                inconvertibleErrorCode()));
-
-  std::unique_ptr<MCRegisterInfo> MRI(TheTarget->createMCRegInfo(TripleName));
-  if (!MRI)
-    ExitOnErr(make_error<StringError>("Unable to create target register info "
-                                      "for " +
-                                          TripleName,
-                                      inconvertibleErrorCode()));
-
-  MCTargetOptions MCOptions;
-  std::unique_ptr<MCAsmInfo> MAI(
-      TheTarget->createMCAsmInfo(*MRI, TripleName, MCOptions));
-  if (!MAI)
-    ExitOnErr(make_error<StringError>("Unable to create target asm info " +
-                                          TripleName,
-                                      inconvertibleErrorCode()));
-
-  auto Ctx = std::make_unique<MCContext>(Triple(TripleName), MAI.get(),
-                                         MRI.get(), STI.get());
-
-  std::unique_ptr<MCDisassembler> Disassembler(
-      TheTarget->createMCDisassembler(*STI, *Ctx));
-  if (!Disassembler)
-    ExitOnErr(make_error<StringError>("Unable to create disassembler for " +
-                                          TripleName,
-                                      inconvertibleErrorCode()));
-
-  std::unique_ptr<MCInstrInfo> MII(TheTarget->createMCInstrInfo());
-  if (!MII)
-    ExitOnErr(make_error<StringError>("Unable to create instruction info for" +
-                                          TripleName,
-                                      inconvertibleErrorCode()));
-
-  std::unique_ptr<MCInstrAnalysis> MIA(
-      TheTarget->createMCInstrAnalysis(MII.get()));
-  if (!MIA)
-    ExitOnErr(make_error<StringError>(
-        "Unable to create instruction analysis for" + TripleName,
-        inconvertibleErrorCode()));
-
-  std::unique_ptr<MCInstPrinter> InstPrinter(
-      TheTarget->createMCInstPrinter(Triple(TripleName), 0, *MAI, *MII, *MRI));
-  if (!InstPrinter)
-    ExitOnErr(make_error<StringError>(
-        "Unable to create instruction printer for" + TripleName,
-        inconvertibleErrorCode()));
-  return {TheTarget,      std::move(STI), std::move(MRI),
-          std::move(MAI), std::move(Ctx), std::move(Disassembler),
-          std::move(MII), std::move(MIA), std::move(InstPrinter)};
-}
-
-static Error addSelfRelocations(LinkGraph &G) {
-  auto TI = getTargetInfo(G.getTargetTriple());
-  for (auto *Sym : G.defined_symbols())
-    if (Sym->isCallable())
-      if (auto Err = addFunctionPointerRelocationsToCurrentSymbol(
-              *Sym, G, *TI.Disassembler, *TI.MIA))
-        return Err;
-  return Error::success();
-}
-
 static Expected<ExecutorSymbolDef> getMainEntryPoint(Session &S) {
   return S.ES.lookup(S.JDSearchOrder, S.ES.intern(EntryPointName));
-}
-
-static Expected<ExecutorSymbolDef> getOrcRuntimeEntryPoint(Session &S) {
-  std::string RuntimeEntryPoint = "__orc_rt_run_program_wrapper";
-  if (S.ES.getTargetTriple().getObjectFormat() == Triple::MachO)
-    RuntimeEntryPoint = '_' + RuntimeEntryPoint;
-  return S.ES.lookup(S.JDSearchOrder, S.ES.intern(RuntimeEntryPoint));
 }
 
 static Expected<ExecutorSymbolDef> getEntryPoint(Session &S) {
@@ -1294,36 +1055,7 @@ static Expected<ExecutorSymbolDef> getEntryPoint(Session &S) {
            << "\": " << formatv("{0:x16}", EntryPoint.getAddress()) << "\n";
   });
 
-  // If we're running with the ORC runtime then replace the entry-point
-  // with the __orc_rt_run_program symbol.
-  if (!OrcRuntime.empty()) {
-    if (auto EP = getOrcRuntimeEntryPoint(S))
-      EntryPoint = *EP;
-    else
-      return EP.takeError();
-    LLVM_DEBUG({
-      dbgs() << "(called via __orc_rt_run_program_wrapper at "
-             << formatv("{0:x16}", EntryPoint.getAddress()) << ")\n";
-    });
-  }
-
   return EntryPoint;
-}
-
-static Expected<int> runWithRuntime(Session &S, ExecutorAddr EntryPointAddr) {
-  StringRef DemangledEntryPoint = EntryPointName;
-  if (S.ES.getTargetTriple().getObjectFormat() == Triple::MachO &&
-      DemangledEntryPoint.front() == '_')
-    DemangledEntryPoint = DemangledEntryPoint.drop_front();
-  using llvm::orc::shared::SPSString;
-  using SPSRunProgramSig =
-      int64_t(SPSString, SPSString, shared::SPSSequence<SPSString>);
-  int64_t Result;
-  if (auto Err = S.ES.callSPSWrapper<SPSRunProgramSig>(
-          EntryPointAddr, Result, S.MainJD->getName(), DemangledEntryPoint,
-          static_cast<std::vector<std::string> &>(InputArgv)))
-    return std::move(Err);
-  return Result;
 }
 
 static Expected<int> runWithoutRuntime(Session &S,
@@ -1627,12 +1359,6 @@ Error StatsPlugin::recordPostFixupStats(LinkGraph &G) {
   return Error::success();
 }
 
-namespace llvm {
-void enableStatistics(Session &S, bool UsingOrcRuntime) {
-  StatsPlugin::enableIfNeeded(S, UsingOrcRuntime);
-}
-} // namespace llvm
-
 extern "C" {
 void invoke_jitlink(const char *AotFile) {
   int argc = 4;
@@ -1654,8 +1380,6 @@ void invoke_jitlink(const char *AotFile) {
 
   auto S = ExitOnErr(Session::Create(TT, Features));
 
-  enableStatistics(*S, !OrcRuntime.empty());
-
   {
     ExitOnErr(addSessionInputs(*S));
   }
@@ -1674,12 +1398,8 @@ void invoke_jitlink(const char *AotFile) {
   int Result = 0;
   if (!NoExec) {
     LLVM_DEBUG(dbgs() << "Running \"" << EntryPointName << "\"...\n");
-    if (!OrcRuntime.empty())
-      Result =
-          ExitOnErr(runWithRuntime(*S, ExecutorAddr(EntryPoint->getAddress())));
-    else
-      Result = ExitOnErr(
-          runWithoutRuntime(*S, ExecutorAddr(EntryPoint->getAddress())));
+    Result = ExitOnErr(
+        runWithoutRuntime(*S, ExecutorAddr(EntryPoint->getAddress())));
   }
 
   // Destroy the session.
