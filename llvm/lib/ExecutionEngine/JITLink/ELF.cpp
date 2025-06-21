@@ -86,6 +86,9 @@ createLinkGraphFromELFObject(MemoryBufferRef ObjectBuffer) {
 
   switch (*TargetMachineArch) {
   case ELF::EM_AARCH64:
+    if (Buffer.data()[ELF::EI_NIDENT] == 0x01 &&
+        Buffer.data()[ELF::EI_NIDENT+1] == 0xFE)
+      return createLinkGraphFromELFAOTObject_aarch64(ObjectBuffer);
     return createLinkGraphFromELFObject_aarch64(ObjectBuffer);
   case ELF::EM_ARM:
     return createLinkGraphFromELFObject_aarch32(ObjectBuffer);

@@ -72,6 +72,7 @@ public:
 
   /// Attempt to construct and return the LinkGraph.
   Expected<std::unique_ptr<LinkGraph>> buildGraph();
+  Expected<std::unique_ptr<LinkGraph>> buildPartialGraph();
 
   /// Call to derived class to handle relocations. These require
   /// architecture specific knowledge to map to JITLink edge kinds.
@@ -82,8 +83,7 @@ protected:
   using ELFSymbolIndex = unsigned;
 
   bool isRelocatable() const {
-    return Obj.getHeader().e_type == llvm::ELF::ET_REL ||
-      Obj.getHeader().e_type == llvm::ELF::ET_AOT;
+    return Obj.getHeader().e_type == llvm::ELF::ET_REL;
   }
 
   void setGraphBlock(ELFSectionIndex SecIndex, Block *B) {
@@ -121,6 +121,7 @@ protected:
   Error prepare();
   Error graphifySections();
   Error graphifySymbols();
+  Error graphifyPartialSymbols();
 
   /// Override in derived classes to suppress certain sections in the link
   /// graph.
@@ -218,6 +219,24 @@ Expected<std::unique_ptr<LinkGraph>> ELFLinkGraphBuilder<ELFT>::buildGraph() {
   if (auto Err = addRelocations())
     return std::move(Err);
 
+  return std::move(G);
+}
+
+template <typename ELFT>
+Expected<std::unique_ptr<LinkGraph>> ELFLinkGraphBuilder<ELFT>::buildPartialGraph() {
+  if (auto Err = prepare())
+    return std::move(Err);
+
+  if (auto Err = graphifySections())
+    return std::move(Err);
+
+  if (auto Err = graphifyPartialSymbols())
+    return std::move(Err);
+
+  /*
+  if (auto Err = addRelocations())
+    return std::move(Err);
+  */
   return std::move(G);
 }
 
@@ -587,6 +606,19 @@ template <typename ELFT> Error ELFLinkGraphBuilder<ELFT>::graphifySymbols() {
       });
     }
   }
+
+  return Error::success();
+}
+
+template <typename ELFT> Error ELFLinkGraphBuilder<ELFT>::graphifyPartialSymbols() {
+  // No SYMTAB -- Bail out early.
+  if (!SymTabSec)
+    return Error::success();
+
+  // Get the section content as a Symbols array.
+  auto Symbols = Obj.symbols(SymTabSec);
+  if (!Symbols)
+    return Symbols.takeError();
 
   return Error::success();
 }

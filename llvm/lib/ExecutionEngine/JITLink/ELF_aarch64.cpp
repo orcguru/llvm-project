@@ -607,6 +607,31 @@ createLinkGraphFromELFObject_aarch64(MemoryBufferRef ObjectBuffer) {
       .buildGraph();
 }
 
+Expected<std::unique_ptr<LinkGraph>>
+createLinkGraphFromELFAOTObject_aarch64(MemoryBufferRef ObjectBuffer) {
+  LLVM_DEBUG({
+    dbgs() << "Building jitlink graph for new input "
+           << ObjectBuffer.getBufferIdentifier() << "...\n";
+  });
+
+  auto ELFObj = object::ObjectFile::createELFObjectFile(ObjectBuffer);
+  if (!ELFObj)
+    return ELFObj.takeError();
+
+  auto Features = (*ELFObj)->getFeatures();
+  if (!Features)
+    return Features.takeError();
+
+  assert((*ELFObj)->getArch() == Triple::aarch64 &&
+         "Only AArch64 (little endian) is supported for now");
+
+  auto &ELFObjFile = cast<object::ELFObjectFile<object::ELF64LE>>(**ELFObj);
+  return ELFLinkGraphBuilder_aarch64<object::ELF64LE>(
+             (*ELFObj)->getFileName(), ELFObjFile.getELFFile(),
+             (*ELFObj)->makeTriple(), std::move(*Features))
+      .buildPartialGraph();
+}
+
 void link_ELF_aarch64(std::unique_ptr<LinkGraph> G,
                       std::unique_ptr<JITLinkContext> Ctx) {
   PassConfiguration Config;

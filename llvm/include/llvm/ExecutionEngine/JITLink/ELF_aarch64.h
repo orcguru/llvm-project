@@ -28,6 +28,9 @@ namespace jitlink {
 Expected<std::unique_ptr<LinkGraph>>
 createLinkGraphFromELFObject_aarch64(MemoryBufferRef ObjectBuffer);
 
+Expected<std::unique_ptr<LinkGraph>>
+createLinkGraphFromELFAOTObject_aarch64(MemoryBufferRef ObjectBuffer);
+
 /// jit-link the given object buffer, which must be a ELF aarch64 relocatable
 /// object file.
 void link_ELF_aarch64(std::unique_ptr<LinkGraph> G,
