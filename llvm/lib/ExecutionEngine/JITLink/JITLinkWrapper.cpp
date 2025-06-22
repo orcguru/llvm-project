@@ -67,65 +67,19 @@ static cl::list<std::string> InputFiles(cl::Positional, cl::OneOrMore,
                                         cl::desc("input files"),
                                         cl::cat(JITLinkCategory));
 
-static cl::opt<bool> NoExec("noexec", cl::desc("Do not execute loaded code"),
-                            cl::init(false), cl::cat(JITLinkCategory));
-
 static cl::opt<std::string>
     EntryPointName("entry", cl::desc("Symbol to call as main entry point"),
                    cl::init(""), cl::cat(JITLinkCategory));
-
-static cl::list<std::string> JITDylibs(
-    "jd",
-    cl::desc("Specifies the JITDylib to be used for any subsequent "
-             "input file, -L<seacrh-path>, and -l<library> arguments"),
-    cl::cat(JITLinkCategory));
-
-static cl::list<std::string>
-    Dylibs("preload",
-           cl::desc("Pre-load dynamic libraries (e.g. language runtimes "
-                    "required by the ORC runtime)"),
-           cl::cat(JITLinkCategory));
 
 static cl::list<std::string> InputArgv("args", cl::Positional,
                                        cl::desc("<program arguments>..."),
                                        cl::PositionalEatsArgs,
                                        cl::cat(JITLinkCategory));
 
-static cl::opt<bool>
-    NoProcessSymbols("no-process-syms",
-                     cl::desc("Do not resolve to llvm-jitlink process symbols"),
-                     cl::init(false), cl::cat(JITLinkCategory));
-
-static cl::opt<std::string> SlabAllocateSizeString(
-    "slab-allocate",
-    cl::desc("Allocate from a slab of the given size "
-             "(allowable suffixes: Kb, Mb, Gb. default = "
-             "Kb)"),
-    cl::init(""), cl::cat(JITLinkCategory));
-
-static cl::opt<uint64_t> SlabAddress(
-    "slab-address",
-    cl::desc("Set slab target address (requires -slab-allocate and -noexec)"),
-    cl::init(~0ULL), cl::cat(JITLinkCategory));
-
-static cl::opt<uint64_t> SlabPageSize(
-    "slab-page-size",
-    cl::desc("Set page size for slab (requires -slab-allocate and -noexec)"),
-    cl::init(0), cl::cat(JITLinkCategory));
-
 static ExitOnError ExitOnErr;
-
-static LLVM_ATTRIBUTE_USED void linkComponents() {
-}
 
 static bool UseTestResultOverride = false;
 static int64_t TestResultOverride = 0;
-
-extern "C" LLVM_ATTRIBUTE_USED void
-llvm_jitlink_setTestResultOverride(int64_t Value) {
-  TestResultOverride = Value;
-  UseTestResultOverride = true;
-}
 
 namespace {
 
@@ -203,166 +157,6 @@ operator<<(raw_ostream &OS, const Session::FileInfoMap &FIM) {
   return OS;
 }
 
-static Error applyHarnessPromotions(Session &S, LinkGraph &G) {
-
-  // If this graph is part of the test harness there's nothing to do.
-  if (S.HarnessFiles.empty() || S.HarnessFiles.count(G.getName()))
-    return Error::success();
-
-  LLVM_DEBUG(dbgs() << "Applying promotions to graph " << G.getName() << "\n");
-
-  // If this graph is part of the test then promote any symbols referenced by
-  // the harness to default scope, remove all symbols that clash with harness
-  // definitions.
-  std::vector<Symbol *> DefinitionsToRemove;
-  for (auto *Sym : G.defined_symbols()) {
-
-    if (!Sym->hasName())
-      continue;
-
-    if (Sym->getLinkage() == Linkage::Weak) {
-      if (!S.CanonicalWeakDefs.count(Sym->getName()) ||
-          S.CanonicalWeakDefs[Sym->getName()] != G.getName()) {
-        LLVM_DEBUG({
-          dbgs() << "  Externalizing weak symbol " << Sym->getName() << "\n";
-        });
-        DefinitionsToRemove.push_back(Sym);
-      } else {
-        LLVM_DEBUG({
-          dbgs() << "  Making weak symbol " << Sym->getName() << " strong\n";
-        });
-        if (S.HarnessExternals.count(Sym->getName()))
-          Sym->setScope(Scope::Default);
-        else
-          Sym->setScope(Scope::Hidden);
-        Sym->setLinkage(Linkage::Strong);
-      }
-    } else if (S.HarnessExternals.count(Sym->getName())) {
-      LLVM_DEBUG(dbgs() << "  Promoting " << Sym->getName() << "\n");
-      Sym->setScope(Scope::Default);
-      Sym->setLive(true);
-      continue;
-    } else if (S.HarnessDefinitions.count(Sym->getName())) {
-      LLVM_DEBUG(dbgs() << "  Externalizing " << Sym->getName() << "\n");
-      DefinitionsToRemove.push_back(Sym);
-    }
-  }
-
-  for (auto *Sym : DefinitionsToRemove)
-    G.makeExternal(*Sym);
-
-  return Error::success();
-}
-
-// A memory mapper with a fake offset applied only used for -noexec testing
-class InProcessDeltaMapper final : public InProcessMemoryMapper {
-public:
-  InProcessDeltaMapper(size_t PageSize, uint64_t TargetAddr)
-      : InProcessMemoryMapper(PageSize), TargetMapAddr(TargetAddr),
-        DeltaAddr(0) {}
-
-  static Expected<std::unique_ptr<InProcessDeltaMapper>> Create() {
-    size_t PageSize = SlabPageSize;
-    if (!PageSize) {
-      if (auto PageSizeOrErr = sys::Process::getPageSize())
-        PageSize = *PageSizeOrErr;
-      else
-        return PageSizeOrErr.takeError();
-    }
-
-    if (PageSize == 0)
-      return make_error<StringError>("Page size is zero",
-                                     inconvertibleErrorCode());
-
-    return std::make_unique<InProcessDeltaMapper>(PageSize, SlabAddress);
-  }
-
-  void reserve(size_t NumBytes, OnReservedFunction OnReserved) override {
-    InProcessMemoryMapper::reserve(
-        NumBytes, [this, OnReserved = std::move(OnReserved)](
-                      Expected<ExecutorAddrRange> Result) mutable {
-          if (!Result)
-            return OnReserved(Result.takeError());
-
-          assert(DeltaAddr == 0 && "Overwriting previous offset");
-          if (TargetMapAddr != ~0ULL)
-            DeltaAddr = TargetMapAddr - Result->Start.getValue();
-          auto OffsetRange = ExecutorAddrRange(Result->Start + DeltaAddr,
-                                               Result->End + DeltaAddr);
-
-          OnReserved(OffsetRange);
-        });
-  }
-
-  char *prepare(ExecutorAddr Addr, size_t ContentSize) override {
-    return InProcessMemoryMapper::prepare(Addr - DeltaAddr, ContentSize);
-  }
-
-  void initialize(AllocInfo &AI, OnInitializedFunction OnInitialized) override {
-    // Slide mapping based on delta, make all segments read-writable, and
-    // discard allocation actions.
-    auto FixedAI = std::move(AI);
-    FixedAI.MappingBase -= DeltaAddr;
-    for (auto &Seg : FixedAI.Segments)
-      Seg.AG = {MemProt::Read | MemProt::Write, Seg.AG.getMemLifetime()};
-    FixedAI.Actions.clear();
-    InProcessMemoryMapper::initialize(
-        FixedAI, [this, OnInitialized = std::move(OnInitialized)](
-                     Expected<ExecutorAddr> Result) mutable {
-          if (!Result)
-            return OnInitialized(Result.takeError());
-
-          OnInitialized(ExecutorAddr(Result->getValue() + DeltaAddr));
-        });
-  }
-
-  void deinitialize(ArrayRef<ExecutorAddr> Allocations,
-                    OnDeinitializedFunction OnDeInitialized) override {
-    std::vector<ExecutorAddr> Addrs(Allocations.size());
-    for (const auto Base : Allocations) {
-      Addrs.push_back(Base - DeltaAddr);
-    }
-
-    InProcessMemoryMapper::deinitialize(Addrs, std::move(OnDeInitialized));
-  }
-
-  void release(ArrayRef<ExecutorAddr> Reservations,
-               OnReleasedFunction OnRelease) override {
-    std::vector<ExecutorAddr> Addrs(Reservations.size());
-    for (const auto Base : Reservations) {
-      Addrs.push_back(Base - DeltaAddr);
-    }
-    InProcessMemoryMapper::release(Addrs, std::move(OnRelease));
-  }
-
-private:
-  uint64_t TargetMapAddr;
-  uint64_t DeltaAddr;
-};
-
-Expected<uint64_t> getSlabAllocSize(StringRef SizeString) {
-  SizeString = SizeString.trim();
-
-  uint64_t Units = 1024;
-
-  if (SizeString.ends_with_insensitive("kb"))
-    SizeString = SizeString.drop_back(2).rtrim();
-  else if (SizeString.ends_with_insensitive("mb")) {
-    Units = 1024 * 1024;
-    SizeString = SizeString.drop_back(2).rtrim();
-  } else if (SizeString.ends_with_insensitive("gb")) {
-    Units = 1024 * 1024 * 1024;
-    SizeString = SizeString.drop_back(2).rtrim();
-  }
-
-  uint64_t SlabSize = 0;
-  if (SizeString.getAsInteger(10, SlabSize))
-    return make_error<StringError>("Invalid numeric format for slab size",
-                                   inconvertibleErrorCode());
-
-  return SlabSize * Units;
-}
-
 static std::unique_ptr<JITLinkMemoryManager> createInProcessMemoryManager() {
   uint64_t SlabSize;
 #ifdef _WIN32
@@ -371,141 +165,10 @@ static std::unique_ptr<JITLinkMemoryManager> createInProcessMemoryManager() {
   SlabSize = 1024 * 1024 * 1024;
 #endif
 
-  if (!SlabAllocateSizeString.empty())
-    SlabSize = ExitOnErr(getSlabAllocSize(SlabAllocateSizeString));
-
-  // If this is a -no-exec case and we're tweaking the slab address or size then
-  // use the delta mapper.
-  if (NoExec && (SlabAddress || SlabPageSize))
-    return ExitOnErr(
-        MapperJITLinkMemoryManager::CreateWithMapper<InProcessDeltaMapper>(
-            SlabSize));
-
   // Otherwise use the standard in-process mapper.
   return ExitOnErr(
       MapperJITLinkMemoryManager::CreateWithMapper<InProcessMemoryMapper>(
           SlabSize));
-}
-
-Expected<std::unique_ptr<jitlink::JITLinkMemoryManager>>
-createSharedMemoryManager(SimpleRemoteEPC &SREPC) {
-  SharedMemoryMapper::SymbolAddrs SAs;
-  if (auto Err = SREPC.getBootstrapSymbols(
-          {{SAs.Instance, rt::ExecutorSharedMemoryMapperServiceInstanceName},
-           {SAs.Reserve,
-            rt::ExecutorSharedMemoryMapperServiceReserveWrapperName},
-           {SAs.Initialize,
-            rt::ExecutorSharedMemoryMapperServiceInitializeWrapperName},
-           {SAs.Deinitialize,
-            rt::ExecutorSharedMemoryMapperServiceDeinitializeWrapperName},
-           {SAs.Release,
-            rt::ExecutorSharedMemoryMapperServiceReleaseWrapperName}}))
-    return std::move(Err);
-
-#ifdef _WIN32
-  size_t SlabSize = 1024 * 1024;
-#else
-  size_t SlabSize = 1024 * 1024 * 1024;
-#endif
-
-  if (!SlabAllocateSizeString.empty())
-    SlabSize = ExitOnErr(getSlabAllocSize(SlabAllocateSizeString));
-
-  return MapperJITLinkMemoryManager::CreateWithMapper<SharedMemoryMapper>(
-      SlabSize, SREPC, SAs);
-}
-
-
-static Expected<MaterializationUnit::Interface>
-getTestObjectFileInterface(Session &S, MemoryBufferRef O) {
-
-  // Get the standard interface for this object, but ignore the symbols field.
-  // We'll handle that manually to include promotion.
-  auto I = getObjectFileInterface(S.ES, O);
-  if (!I)
-    return I.takeError();
-  I->SymbolFlags.clear();
-
-  // If creating an object file was going to fail it would have happened above,
-  // so we can 'cantFail' this.
-  auto Obj = cantFail(object::ObjectFile::createObjectFile(O));
-
-  // The init symbol must be included in the SymbolFlags map if present.
-  if (I->InitSymbol)
-    I->SymbolFlags[I->InitSymbol] =
-        JITSymbolFlags::MaterializationSideEffectsOnly;
-
-  for (auto &Sym : Obj->symbols()) {
-    Expected<uint32_t> SymFlagsOrErr = Sym.getFlags();
-    if (!SymFlagsOrErr)
-      // TODO: Test this error.
-      return SymFlagsOrErr.takeError();
-
-    // Skip symbols not defined in this object file.
-    if ((*SymFlagsOrErr & object::BasicSymbolRef::SF_Undefined))
-      continue;
-
-    auto Name = Sym.getName();
-    if (!Name)
-      return Name.takeError();
-
-    // Skip symbols that have type SF_File.
-    if (auto SymType = Sym.getType()) {
-      if (*SymType == object::SymbolRef::ST_File)
-        continue;
-    } else
-      return SymType.takeError();
-
-    auto SymFlags = JITSymbolFlags::fromObjectSymbol(Sym);
-    if (!SymFlags)
-      return SymFlags.takeError();
-
-    if (SymFlags->isWeak()) {
-      // If this is a weak symbol that's not defined in the harness then we
-      // need to either mark it as strong (if this is the first definition
-      // that we've seen) or discard it.
-      if (S.HarnessDefinitions.count(*Name) || S.CanonicalWeakDefs.count(*Name))
-        continue;
-      S.CanonicalWeakDefs[*Name] = O.getBufferIdentifier();
-      *SymFlags &= ~JITSymbolFlags::Weak;
-      if (!S.HarnessExternals.count(*Name))
-        *SymFlags &= ~JITSymbolFlags::Exported;
-    } else if (S.HarnessExternals.count(*Name)) {
-      *SymFlags |= JITSymbolFlags::Exported;
-    } else if (S.HarnessDefinitions.count(*Name) ||
-               !(*SymFlagsOrErr & object::BasicSymbolRef::SF_Global))
-      continue;
-
-    auto InternedName = S.ES.intern(*Name);
-    I->SymbolFlags[InternedName] = std::move(*SymFlags);
-  }
-
-  return I;
-}
-
-static Error loadProcessSymbols(Session &S) {
-  S.ProcessSymsJD = &S.ES.createBareJITDylib("Process");
-  auto FilterMainEntryPoint =
-      [EPName = S.ES.intern(EntryPointName)](SymbolStringPtr Name) {
-        return Name != EPName;
-      };
-  S.ProcessSymsJD->addGenerator(
-      ExitOnErr(orc::EPCDynamicLibrarySearchGenerator::GetForTargetProcess(
-          S.ES, std::move(FilterMainEntryPoint))));
-
-  return Error::success();
-}
-
-static Error loadDylibs(Session &S) {
-  LLVM_DEBUG(dbgs() << "Loading dylibs...\n");
-  for (const auto &Dylib : Dylibs) {
-    LLVM_DEBUG(dbgs() << "  " << Dylib << "\n");
-    auto DL = S.getOrLoadDynamicLibrary(Dylib);
-    if (!DL)
-      return DL.takeError();
-  }
-
-  return Error::success();
 }
 
 Expected<std::unique_ptr<Session>> Session::Create(Triple TT,
@@ -565,17 +228,11 @@ Session::Session(std::unique_ptr<ExecutorProcessControl> EPC, Error &Err)
 
   ES.setErrorReporter(reportLLVMJITLinkError);
 
-  if (!NoProcessSymbols)
-    ExitOnErr(loadProcessSymbols(*this));
-
-  ExitOnErr(loadDylibs(*this));
-
   auto &TT = ES.getTargetTriple();
 
   if (TT.isOSBinFormatELF()) {
-    if (!NoExec)
-      ObjLayer.addPlugin(std::make_unique<EHFrameRegistrationPlugin>(
-          ES, ExitOnErr(EPCEHFrameRegistrar::Create(this->ES))));
+    ObjLayer.addPlugin(std::make_unique<EHFrameRegistrationPlugin>(
+        ES, ExitOnErr(EPCEHFrameRegistrar::Create(this->ES))));
   }
 
   if (auto MainJDOrErr = ES.createJITDylib("main"))
@@ -583,17 +240,6 @@ Session::Session(std::unique_ptr<ExecutorProcessControl> EPC, Error &Err)
   else {
     Err = MainJDOrErr.takeError();
     return;
-  }
-
-  if (NoProcessSymbols) {
-    // This symbol is used in testcases, but we're not reflecting process
-    // symbols so we'll need to make it available some other way.
-    auto &TestResultJD = ES.createBareJITDylib("<TestResultJD>");
-    ExitOnErr(TestResultJD.define(absoluteSymbols(
-        {{ES.intern("llvm_jitlink_setTestResultOverride"),
-          {ExecutorAddr::fromPtr(llvm_jitlink_setTestResultOverride),
-           JITSymbolFlags::Exported}}})));
-    MainJD->addToLinkOrder(TestResultJD);
   }
 
   ObjLayer.addPlugin(std::make_unique<JITLinkSessionPlugin>(*this));
@@ -610,8 +256,6 @@ void Session::dumpSessionInfo(raw_ostream &OS) {
 
 void Session::modifyPassConfig(const Triple &TT,
                                PassConfiguration &PassConfig) {
-  PassConfig.PrePrunePasses.push_back(
-      [this](LinkGraph &G) { return applyHarnessPromotions(*this, G); });
 }
 
 Expected<JITDylib *> Session::getOrLoadDynamicLibrary(StringRef LibPath) {
@@ -884,50 +528,9 @@ static std::pair<Triple, SubtargetFeatures> getFirstFileTripleAndFeatures() {
 
 static Error sanitizeArguments(const Triple &TT, const char *ArgV0) {
 
-  // -noexec and --args should not be used together.
-  if (NoExec && !InputArgv.empty())
-    errs() << "Warning: --args passed to -noexec run will be ignored.\n";
-
   // Set the entry point name if not specified.
   if (EntryPointName.empty())
     EntryPointName = TT.getObjectFormat() == Triple::MachO ? "_main" : "main";
-
-  // If -slab-address is passed, require -slab-allocate and -noexec
-  if (SlabAddress != ~0ULL) {
-    if (SlabAllocateSizeString == "" || !NoExec)
-      return make_error<StringError>(
-          "-slab-address requires -slab-allocate and -noexec",
-          inconvertibleErrorCode());
-
-    if (SlabPageSize == 0)
-      errs() << "Warning: -slab-address used without -slab-page-size.\n";
-  }
-
-  if (SlabPageSize != 0) {
-    // -slab-page-size requires slab alloc.
-    if (SlabAllocateSizeString == "")
-      return make_error<StringError>("-slab-page-size requires -slab-allocate",
-                                     inconvertibleErrorCode());
-
-    // Check -slab-page-size / -noexec interactions.
-    if (!NoExec) {
-      if (auto RealPageSize = sys::Process::getPageSize()) {
-        if (SlabPageSize % *RealPageSize)
-          return make_error<StringError>(
-              "-slab-page-size must be a multiple of real page size for exec "
-              "tests (did you mean to use -noexec ?)\n",
-              inconvertibleErrorCode());
-      } else {
-        errs() << "Could not retrieve process page size:\n";
-        logAllUnhandledErrors(RealPageSize.takeError(), errs(), "");
-        errs() << "Executing with slab page size = "
-               << formatv("{0:x}", SlabPageSize) << ".\n"
-               << "Tool may crash if " << formatv("{0:x}", SlabPageSize)
-               << " is not a multiple of the real process page size.\n"
-               << "(did you mean to use -noexec ?)";
-      }
-    }
-  }
 
   return Error::success();
 }
@@ -941,18 +544,6 @@ static Error createJITDylibs(Session &S,
     IdxToJD[0] = S.MainJD;
     S.JDSearchOrder.push_back({S.MainJD, JITDylibLookupFlags::MatchAllSymbols});
     LLVM_DEBUG(dbgs() << "  0: " << S.MainJD->getName() << "\n");
-
-    // Add any extra JITDylibs from the command line.
-    for (auto JDItr = JITDylibs.begin(), JDEnd = JITDylibs.end();
-         JDItr != JDEnd; ++JDItr) {
-      auto JD = S.ES.createJITDylib(*JDItr);
-      if (!JD)
-        return JD.takeError();
-      unsigned JDIdx = JITDylibs.getPosition(JDItr - JITDylibs.begin());
-      IdxToJD[JDIdx] = &*JD;
-      S.JDSearchOrder.push_back({&*JD, JITDylibLookupFlags::MatchAllSymbols});
-      LLVM_DEBUG(dbgs() << "  " << JDIdx << ": " << JD->getName() << "\n");
-    }
   }
 
   if (S.PlatformJD)
@@ -992,20 +583,8 @@ static Error addObjects(Session &S,
     if (!ObjBuffer)
       return ObjBuffer.takeError();
 
-    if (S.HarnessFiles.empty()) {
-      if (auto Err = S.ObjLayer.add(JD, std::move(*ObjBuffer)))
-        return Err;
-    } else {
-      // We're in -harness mode. Use a custom interface for this
-      // test object.
-      auto ObjInterface =
-          getTestObjectFileInterface(S, (*ObjBuffer)->getMemBufferRef());
-      if (!ObjInterface)
-        return ObjInterface.takeError();
-      if (auto Err = S.ObjLayer.add(JD, std::move(*ObjBuffer),
-                                    std::move(*ObjInterface)))
-        return Err;
-    }
+    if (auto Err = S.ObjLayer.add(JD, std::move(*ObjBuffer)))
+      return Err;
   }
 
   return Error::success();
@@ -1396,11 +975,9 @@ void invoke_jitlink(const char *AotFile) {
   }
 
   int Result = 0;
-  if (!NoExec) {
-    LLVM_DEBUG(dbgs() << "Running \"" << EntryPointName << "\"...\n");
-    Result = ExitOnErr(
-        runWithoutRuntime(*S, ExecutorAddr(EntryPoint->getAddress())));
-  }
+  LLVM_DEBUG(dbgs() << "Running \"" << EntryPointName << "\"...\n");
+  Result = ExitOnErr(
+      runWithoutRuntime(*S, ExecutorAddr(EntryPoint->getAddress())));
 
   // Destroy the session.
   ExitOnErr(S->ES.endSession());
