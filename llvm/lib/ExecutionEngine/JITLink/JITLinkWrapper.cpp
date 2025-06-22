@@ -1,59 +1,16 @@
 #include "/home/felix/Github/llvm-project/llvm/tools/llvm-jitlink/llvm-jitlink.h"
-
 #include "llvm/BinaryFormat/Magic.h"
-#include "llvm/ExecutionEngine/Orc/COFFPlatform.h"
-#include "llvm/ExecutionEngine/Orc/COFFVCRuntimeSupport.h"
-#include "llvm/ExecutionEngine/Orc/DebugObjectManagerPlugin.h"
-#include "llvm/ExecutionEngine/Orc/Debugging/DebugInfoSupport.h"
-#include "llvm/ExecutionEngine/Orc/Debugging/DebuggerSupportPlugin.h"
-#include "llvm/ExecutionEngine/Orc/Debugging/PerfSupportPlugin.h"
-#include "llvm/ExecutionEngine/Orc/Debugging/VTuneSupportPlugin.h"
-#include "llvm/ExecutionEngine/Orc/ELFNixPlatform.h"
-#include "llvm/ExecutionEngine/Orc/EPCDebugObjectRegistrar.h"
-#include "llvm/ExecutionEngine/Orc/EPCDynamicLibrarySearchGenerator.h"
-#include "llvm/ExecutionEngine/Orc/EPCEHFrameRegistrar.h"
-#include "llvm/ExecutionEngine/Orc/ExecutionUtils.h"
-#include "llvm/ExecutionEngine/Orc/IndirectionUtils.h"
-#include "llvm/ExecutionEngine/Orc/MachOPlatform.h"
 #include "llvm/ExecutionEngine/Orc/MapperJITLinkMemoryManager.h"
-#include "llvm/ExecutionEngine/Orc/ObjectFileInterface.h"
-#include "llvm/ExecutionEngine/Orc/Shared/OrcRTBridge.h"
-#include "llvm/ExecutionEngine/Orc/TargetProcess/JITLoaderGDB.h"
-#include "llvm/ExecutionEngine/Orc/TargetProcess/JITLoaderPerf.h"
-#include "llvm/ExecutionEngine/Orc/TargetProcess/JITLoaderVTune.h"
-#include "llvm/ExecutionEngine/Orc/TargetProcess/RegisterEHFrames.h"
-#include "llvm/MC/MCAsmInfo.h"
-#include "llvm/MC/MCContext.h"
-#include "llvm/MC/MCDisassembler/MCDisassembler.h"
-#include "llvm/MC/MCInstPrinter.h"
-#include "llvm/MC/MCInstrAnalysis.h"
-#include "llvm/MC/MCInstrInfo.h"
-#include "llvm/MC/MCRegisterInfo.h"
-#include "llvm/MC/MCSubtargetInfo.h"
-#include "llvm/MC/MCTargetOptions.h"
-#include "llvm/MC/TargetRegistry.h"
-#include "llvm/Object/COFF.h"
-#include "llvm/Object/MachO.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/Path.h"
-#include "llvm/Support/Process.h"
 #include "llvm/Support/TargetSelect.h"
-#include "llvm/Support/Timer.h"
 
 #include <cstring>
 #include <deque>
 #include <string>
-
-#ifdef LLVM_ON_UNIX
-#include <netdb.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
-#endif // LLVM_ON_UNIX
 
 #define DEBUG_TYPE "llvm_jitlink"
 
@@ -118,45 +75,6 @@ void reportLLVMJITLinkError(Error Err) {
 
 namespace llvm {
 
-static raw_ostream &
-operator<<(raw_ostream &OS, const Session::MemoryRegionInfo &MRI) {
-  return OS << "target addr = "
-            << format("0x%016" PRIx64, MRI.getTargetAddress())
-            << ", content: " << (const void *)MRI.getContent().data() << " -- "
-            << (const void *)(MRI.getContent().data() + MRI.getContent().size())
-            << " (" << MRI.getContent().size() << " bytes)";
-}
-
-static raw_ostream &
-operator<<(raw_ostream &OS, const Session::SymbolInfoMap &SIM) {
-  OS << "Symbols:\n";
-  for (auto &SKV : SIM)
-    OS << "  \"" << SKV.first() << "\" " << SKV.second << "\n";
-  return OS;
-}
-
-static raw_ostream &
-operator<<(raw_ostream &OS, const Session::FileInfo &FI) {
-  for (auto &SIKV : FI.SectionInfos)
-    OS << "  Section \"" << SIKV.first() << "\": " << SIKV.second << "\n";
-  for (auto &GOTKV : FI.GOTEntryInfos)
-    OS << "  GOT \"" << GOTKV.first() << "\": " << GOTKV.second << "\n";
-  for (auto &StubKVs : FI.StubInfos) {
-    OS << "  Stubs \"" << StubKVs.first() << "\":";
-    for (auto MemRegion : StubKVs.second)
-      OS << " " << MemRegion;
-    OS << "\n";
-  }
-  return OS;
-}
-
-static raw_ostream &
-operator<<(raw_ostream &OS, const Session::FileInfoMap &FIM) {
-  for (auto &FIKV : FIM)
-    OS << "File \"" << FIKV.first() << "\":\n" << FIKV.second;
-  return OS;
-}
-
 static std::unique_ptr<JITLinkMemoryManager> createInProcessMemoryManager() {
   uint64_t SlabSize;
 #ifdef _WIN32
@@ -207,22 +125,12 @@ Session::Session(std::unique_ptr<ExecutorProcessControl> EPC, Error &Err)
 
   auto &TT = ES.getTargetTriple();
 
-  if (TT.isOSBinFormatELF()) {
-    ObjLayer.addPlugin(std::make_unique<EHFrameRegistrationPlugin>(
-        ES, ExitOnErr(EPCEHFrameRegistrar::Create(this->ES))));
-  }
-
   if (auto MainJDOrErr = ES.createJITDylib("main"))
     MainJD = &*MainJDOrErr;
   else {
     Err = MainJDOrErr.takeError();
     return;
   }
-
-  // If a name is defined by some harness file then it's a definition, not an
-  // external.
-  for (auto &DefName : HarnessDefinitions)
-    HarnessExternals.erase(DefName.getKey());
 }
 
 } // end namespace llvm
@@ -234,9 +142,7 @@ static std::pair<Triple, SubtargetFeatures> getFirstFileTripleAndFeatures() {
       auto ObjBuffer = ExitOnErr(getFile(InputFile));
       file_magic Magic = identify_magic(ObjBuffer->getBuffer());
       switch (Magic) {
-      case file_magic::coff_object:
-      case file_magic::elf_relocatable:
-      case file_magic::macho_object: {
+      case file_magic::elf_relocatable: {
         auto Obj = ExitOnErr(
             object::ObjectFile::createObjectFile(ObjBuffer->getMemBufferRef()));
         Triple TT = Obj->makeTriple();
@@ -383,15 +289,11 @@ void invoke_jitlink(const char *AotFile) {
 
   auto S = ExitOnErr(Session::Create(TT, Features));
 
-  {
-    ExitOnErr(addSessionInputs(*S));
-  }
+  ExitOnErr(addSessionInputs(*S));
 
   Expected<ExecutorSymbolDef> EntryPoint((ExecutorSymbolDef()));
-  {
-    ExpectedAsOutParameter<ExecutorSymbolDef> _(&EntryPoint);
-    EntryPoint = getEntryPoint(*S);
-  }
+  ExpectedAsOutParameter<ExecutorSymbolDef> _(&EntryPoint);
+  EntryPoint = getEntryPoint(*S);
 
   if (!EntryPoint) {
     reportLLVMJITLinkError(EntryPoint.takeError());
