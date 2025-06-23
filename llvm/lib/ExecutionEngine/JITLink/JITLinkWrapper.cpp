@@ -1,5 +1,6 @@
 #include "/home/felix/Github/llvm-project/llvm/tools/llvm-jitlink/llvm-jitlink.h"
 #include "llvm/BinaryFormat/Magic.h"
+#include "llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h"
 #include "llvm/ExecutionEngine/Orc/MapperJITLinkMemoryManager.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/CommandLine.h"
@@ -37,6 +38,38 @@ static ExitOnError ExitOnErr;
 
 static bool UseTestResultOverride = false;
 static int64_t TestResultOverride = 0;
+
+class FunctionSymbolPlugin : public llvm::orc::ObjectLinkingLayer::Plugin {
+public:
+  // Store function names and addresses
+  std::vector<std::pair<std::string, uint64_t>> FunctionSymbols;
+
+  void modifyPassConfig(llvm::orc::MaterializationResponsibility &MR,
+                        llvm::jitlink::LinkGraph &G,
+                        llvm::jitlink::PassConfiguration &Config) override {
+    for (auto *Sym : G.defined_symbols()) {
+      if (Sym->hasName() && Sym->isCallable()) {
+        // Capture name and address
+        std::string Name = Sym->getName().str();
+        uint64_t Address = Sym->getAddress().getValue();
+        const std::string prefix = "func_";
+        if (Name.find(prefix) == std::string::npos) {
+          continue;
+        }
+        FunctionSymbols.emplace_back(Name, Address);
+      }
+    }
+  }
+
+  // Mandatory overrides (no-op if unused)
+  llvm::Error notifyFailed(llvm::orc::MaterializationResponsibility &MR) override {
+    return llvm::Error::success();
+  }
+  llvm::Error notifyRemovingResources(llvm::orc::JITDylib &JD, llvm::orc::ResourceKey K) override {
+    return llvm::Error::success();
+  }
+  void notifyTransferringResources(llvm::orc::JITDylib &JD, llvm::orc::ResourceKey DstKey, llvm::orc::ResourceKey SrcKey) override {}
+};
 
 namespace {
 
@@ -268,12 +301,29 @@ static Expected<int> runWithoutRuntime(Session &S,
   return S.ES.getExecutorProcessControl().runAsMain(EntryPointAddr, InputArgv);
 }
 
+uint64_t parseFuncHex(const std::string& input) {
+  const std::string prefix = "func_";
+  size_t prefixPos = input.find(prefix);
+  if (prefixPos == std::string::npos) {
+    return 0;
+  }
+  std::string hexStr = input.substr(prefixPos + prefix.length());
+  if (hexStr.empty())
+    return 0;
+  auto isInvalidChar = [](char c) {
+    return !std::isxdigit(static_cast<unsigned char>(c));
+  };
+  if (std::any_of(hexStr.begin(), hexStr.end(), isInvalidChar)) {
+    return 0;
+  }
+  return std::stoull(hexStr, nullptr, 16);
+}
+
 extern "C" {
-void invoke_jitlink(const char *AotFile) {
-  int argc = 4;
-  const char *argv[4] = {"llvm-jitlink", "--debug-only=jitlink", AotFile, "/home/felix/Github/single_thread_demo_translate/scripts/Scratch/experiment_with_jitlink/main.o"};
-  //int argc = 2;
-  //const char *argv[2] = {"llvm-jitlink", "--help"};
+void *invoke_jitlink(const char *AotFile, uint64_t start_code, void (*register_mapping)(uint64_t, uint64_t))
+{
+  int argc = 5;
+  const char *argv[5] = {"llvm-jitlink", "--debug-only=jitlink,llvm_jitlink", "--entry=func_7b0", AotFile, "/home/felix/Github/single_thread_demo_translate/scripts/Scratch/experiment_with_jitlink/main.o"};
   char **argv_convert = (char **)argv;
   InitLLVM X(argc, argv_convert);
 
@@ -283,30 +333,30 @@ void invoke_jitlink(const char *AotFile) {
 
   cl::ParseCommandLineOptions(argc, argv, "llvm jitlink tool");
   ExitOnErr.setBanner(std::string(argv[0]) + ": ");
-
   auto [TT, Features] = getFirstFileTripleAndFeatures();
   ExitOnErr(sanitizeArguments(TT, argv[0]));
-
   auto S = ExitOnErr(Session::Create(TT, Features));
-
   ExitOnErr(addSessionInputs(*S));
 
-  Expected<ExecutorSymbolDef> EntryPoint((ExecutorSymbolDef()));
-  ExpectedAsOutParameter<ExecutorSymbolDef> _(&EntryPoint);
-  EntryPoint = getEntryPoint(*S);
+  auto Plugin = std::make_unique<FunctionSymbolPlugin>();
+  auto &PluginRef = *Plugin;
+  S->ObjLayer.addPlugin(std::move(Plugin));
 
+  Expected<ExecutorSymbolDef> EntryPoint = getEntryPoint(*S);
   if (!EntryPoint) {
     reportLLVMJITLinkError(EntryPoint.takeError());
     exit(1);
   }
 
-  int Result = 0;
-  LLVM_DEBUG(dbgs() << "Running \"" << EntryPointName << "\"...\n");
-  Result = ExitOnErr(
-      runWithoutRuntime(*S, ExecutorAddr(EntryPoint->getAddress())));
+  for (const auto &[Name, Address] : PluginRef.FunctionSymbols) {
+    Expected<ExecutorSymbolDef> Sym = S->ES.lookup(S->JDSearchOrder, S->ES.intern(Name));
+    if (!Sym) {
+      reportLLVMJITLinkError(EntryPoint.takeError());
+      exit(1);
+    }
+    register_mapping((start_code + parseFuncHex(Name)), Sym->getAddress().getValue());
+  }
 
-  // Destroy the session.
-  ExitOnErr(S->ES.endSession());
-  S.reset();
+  return static_cast<void *>(S.release());
 }
 }
