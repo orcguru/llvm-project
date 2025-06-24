@@ -322,8 +322,8 @@ uint64_t parseFuncHex(const std::string& input) {
 extern "C" {
 void *invoke_jitlink(const char *AotFile, uint64_t start_code, void (*register_mapping)(uint64_t, uint64_t))
 {
-  int argc = 5;
-  const char *argv[5] = {"llvm-jitlink", "--debug-only=jitlink,llvm_jitlink", "--entry=func_7b0", AotFile, "/home/felix/Github/single_thread_demo_translate/scripts/Scratch/experiment_with_jitlink/main.o"};
+  int argc = 4;
+  const char *argv[4] = {"llvm-jitlink", "--entry=func_7b0", AotFile, "/home/felix/Github/single_thread_demo_translate/scripts/Scratch/experiment_with_jitlink/main.o"};
   char **argv_convert = (char **)argv;
   InitLLVM X(argc, argv_convert);
 

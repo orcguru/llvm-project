@@ -1249,11 +1249,14 @@ public:
   Symbol &addDefinedSymbol(Block &Content, orc::ExecutorAddrDiff Offset,
                            StringRef Name, orc::ExecutorAddrDiff Size,
                            Linkage L, Scope S, bool IsCallable, bool IsLive) {
+    /* Disable the check for QEMU-AOT since this dramatically slow down symbol
+     * parsing
     assert((S == Scope::Local || llvm::count_if(defined_symbols(),
                                                 [&](const Symbol *Sym) {
                                                   return Sym->getName() == Name;
                                                 }) == 0) &&
            "Duplicate defined symbol");
+    */
     auto &Sym = Symbol::constructNamedDef(Allocator, Content, Offset, Name,
                                           Size, L, S, IsLive, IsCallable);
     Content.getSection().addSymbol(Sym);
