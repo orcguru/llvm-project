@@ -36,9 +36,6 @@ static cl::list<std::string> InputArgv("args", cl::Positional,
 
 static ExitOnError ExitOnErr;
 
-static bool UseTestResultOverride = false;
-static int64_t TestResultOverride = 0;
-
 class FunctionSymbolPlugin : public llvm::orc::ObjectLinkingLayer::Plugin {
 public:
   // Store function names and addresses
@@ -156,8 +153,6 @@ Session::Session(std::unique_ptr<ExecutorProcessControl> EPC, Error &Err)
 
   ES.setErrorReporter(reportLLVMJITLinkError);
 
-  auto &TT = ES.getTargetTriple();
-
   if (auto MainJDOrErr = ES.createJITDylib("main"))
     MainJD = &*MainJDOrErr;
   else {
@@ -212,19 +207,13 @@ static Error createJITDylibs(Session &S,
                              std::map<unsigned, JITDylib *> &IdxToJD) {
   // First, set up JITDylibs.
   LLVM_DEBUG(dbgs() << "Creating JITDylibs...\n");
-  {
-    // Create a "main" JITLinkDylib.
-    IdxToJD[0] = S.MainJD;
-    S.JDSearchOrder.push_back({S.MainJD, JITDylibLookupFlags::MatchAllSymbols});
-    LLVM_DEBUG(dbgs() << "  0: " << S.MainJD->getName() << "\n");
-  }
+  // Create a "main" JITLinkDylib.
+  IdxToJD[0] = S.MainJD;
+  S.JDSearchOrder.push_back({S.MainJD, JITDylibLookupFlags::MatchAllSymbols});
+  LLVM_DEBUG(dbgs() << "  0: " << S.MainJD->getName() << "\n");
 
-  if (S.PlatformJD)
-    S.JDSearchOrder.push_back(
-        {S.PlatformJD, JITDylibLookupFlags::MatchExportedSymbolsOnly});
-  if (S.ProcessSymsJD)
-    S.JDSearchOrder.push_back(
-        {S.ProcessSymsJD, JITDylibLookupFlags::MatchExportedSymbolsOnly});
+  auto VarAddr = llvm::orc::ExecutorAddr::fromPtr((uint64_t *)0xaabbccdd);
+  ExitOnErr(S.MainJD->define(absoluteSymbols({{S.ES.intern("RIP_OFFSET_0x7d5"), {VarAddr, JITSymbolFlags::Exported}}})));
 
   LLVM_DEBUG({
     dbgs() << "Dylib search order is [ ";
@@ -296,11 +285,6 @@ static Expected<ExecutorSymbolDef> getEntryPoint(Session &S) {
   return EntryPoint;
 }
 
-static Expected<int> runWithoutRuntime(Session &S,
-                                       ExecutorAddr EntryPointAddr) {
-  return S.ES.getExecutorProcessControl().runAsMain(EntryPointAddr, InputArgv);
-}
-
 uint64_t parseFuncHex(const std::string& input) {
   const std::string prefix = "func_";
   size_t prefixPos = input.find(prefix);
@@ -322,8 +306,8 @@ uint64_t parseFuncHex(const std::string& input) {
 extern "C" {
 void *invoke_jitlink(const char *AotFile, uint64_t start_code, void (*register_mapping)(uint64_t, uint64_t))
 {
-  int argc = 4;
-  const char *argv[4] = {"llvm-jitlink", "--entry=func_7b0", AotFile, "/home/felix/Github/single_thread_demo_translate/scripts/Scratch/experiment_with_jitlink/main.o"};
+  int argc = 5;
+  const char *argv[5] = {"llvm-jitlink", "--debug-only=jitlink,llvm_jitlink", "--entry=func_7b0", AotFile, "/home/felix/Github/single_thread_demo_translate/scripts/Scratch/experiment_with_jitlink/main.o"};
   char **argv_convert = (char **)argv;
   InitLLVM X(argc, argv_convert);
 
