@@ -325,8 +325,9 @@ void *invoke_jitlink(const char *AotFile, uint64_t StartCode, uint64_t EndCode,
                      void (*register_mapping)(uint64_t, uint64_t), void *HelperFuncs,
                      size_t HelperFuncsSize)
 {
-  int argc = 5;
-  const char *argv[5] = {"llvm-jitlink", "--debug-only=jitlink,llvm_jitlink,orc", "--entry=func_7fb", AotFile, "/home/felix/Github/single_thread_demo_translate/scripts/Scratch/experiment_with_jitlink/main.o"};
+  int argc = 4;
+  const char *argv[4] = {"llvm-jitlink", "--entry=func_7fb", AotFile, "/home/felix/Github/single_thread_demo_translate/scripts/Scratch/experiment_with_jitlink/main.o"};
+  //const char *argv[5] = {"llvm-jitlink", "--debug-only=jitlink,llvm_jitlink,orc", "--entry=func_7fb", AotFile, "/home/felix/Github/single_thread_demo_translate/scripts/Scratch/experiment_with_jitlink/main.o"};
   char **argv_convert = (char **)argv;
   InitLLVM X(argc, argv_convert);
 
