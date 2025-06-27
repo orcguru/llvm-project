@@ -204,7 +204,8 @@ static Error sanitizeArguments(const Triple &TT, const char *ArgV0) {
 }
 
 static Error createJITDylibs(Session &S,
-                             std::map<unsigned, JITDylib *> &IdxToJD) {
+                             std::map<unsigned, JITDylib *> &IdxToJD,
+                             uint64_t StartCode, uint64_t EndCode) {
   // First, set up JITDylibs.
   LLVM_DEBUG(dbgs() << "Creating JITDylibs...\n");
   // Create a "main" JITLinkDylib.
@@ -212,8 +213,12 @@ static Error createJITDylibs(Session &S,
   S.JDSearchOrder.push_back({S.MainJD, JITDylibLookupFlags::MatchAllSymbols});
   LLVM_DEBUG(dbgs() << "  0: " << S.MainJD->getName() << "\n");
 
-  auto VarAddr = llvm::orc::ExecutorAddr::fromPtr((uint64_t *)0xaabbccdd);
-  ExitOnErr(S.MainJD->define(absoluteSymbols({{S.ES.intern("RIP_OFFSET_0x7d5"), {VarAddr, JITSymbolFlags::Exported}}})));
+  for (uint64_t Instr = StartCode; Instr < EndCode; ++Instr) {
+    auto VarAddr = llvm::orc::ExecutorAddr::fromPtr((uint64_t *)Instr);
+    char RipOffsetHex[64] = {0};
+    sprintf(RipOffsetHex, "RIP_OFFSET_0x%lx", (Instr - StartCode));
+    ExitOnErr(S.MainJD->define(absoluteSymbols({{S.ES.intern(RipOffsetHex), {VarAddr, JITSymbolFlags::Exported}}})));
+  }
 
   LLVM_DEBUG({
     dbgs() << "Dylib search order is [ ";
@@ -252,10 +257,10 @@ static Error addObjects(Session &S,
   return Error::success();
 }
 
-static Error addSessionInputs(Session &S) {
+static Error addSessionInputs(Session &S, uint64_t StartCode, uint64_t EndCode) {
   std::map<unsigned, JITDylib *> IdxToJD;
 
-  if (auto Err = createJITDylibs(S, IdxToJD))
+  if (auto Err = createJITDylibs(S, IdxToJD, StartCode, EndCode))
     return Err;
 
   if (auto Err = addObjects(S, IdxToJD))
@@ -304,10 +309,10 @@ uint64_t parseFuncHex(const std::string& input) {
 }
 
 extern "C" {
-void *invoke_jitlink(const char *AotFile, uint64_t start_code, void (*register_mapping)(uint64_t, uint64_t))
+void *invoke_jitlink(const char *AotFile, uint64_t StartCode, uint64_t EndCode, void (*register_mapping)(uint64_t, uint64_t))
 {
   int argc = 5;
-  const char *argv[5] = {"llvm-jitlink", "--debug-only=jitlink,llvm_jitlink", "--entry=func_7b0", AotFile, "/home/felix/Github/single_thread_demo_translate/scripts/Scratch/experiment_with_jitlink/main.o"};
+  const char *argv[5] = {"llvm-jitlink", "--debug-only=jitlink,llvm_jitlink,orc", "--entry=func_7fb", AotFile, "/home/felix/Github/single_thread_demo_translate/scripts/Scratch/experiment_with_jitlink/main.o"};
   char **argv_convert = (char **)argv;
   InitLLVM X(argc, argv_convert);
 
@@ -320,7 +325,7 @@ void *invoke_jitlink(const char *AotFile, uint64_t start_code, void (*register_m
   auto [TT, Features] = getFirstFileTripleAndFeatures();
   ExitOnErr(sanitizeArguments(TT, argv[0]));
   auto S = ExitOnErr(Session::Create(TT, Features));
-  ExitOnErr(addSessionInputs(*S));
+  ExitOnErr(addSessionInputs(*S, StartCode, EndCode));
 
   auto Plugin = std::make_unique<FunctionSymbolPlugin>();
   auto &PluginRef = *Plugin;
@@ -338,7 +343,7 @@ void *invoke_jitlink(const char *AotFile, uint64_t start_code, void (*register_m
       reportLLVMJITLinkError(EntryPoint.takeError());
       exit(1);
     }
-    register_mapping((start_code + parseFuncHex(Name)), Sym->getAddress().getValue());
+    register_mapping((StartCode + parseFuncHex(Name)), Sym->getAddress().getValue());
   }
 
   return static_cast<void *>(S.release());
