@@ -205,7 +205,8 @@ static Error sanitizeArguments(const Triple &TT, const char *ArgV0) {
 
 static Error createJITDylibs(Session &S,
                              std::map<unsigned, JITDylib *> &IdxToJD,
-                             uint64_t StartCode, uint64_t EndCode) {
+                             uint64_t StartCode, uint64_t EndCode,
+                             void *HelperFuncs, size_t HelperFuncsSize) {
   // First, set up JITDylibs.
   LLVM_DEBUG(dbgs() << "Creating JITDylibs...\n");
   // Create a "main" JITLinkDylib.
@@ -218,6 +219,16 @@ static Error createJITDylibs(Session &S,
     char RipOffsetHex[64] = {0};
     sprintf(RipOffsetHex, "RIP_OFFSET_0x%lx", (Instr - StartCode));
     ExitOnErr(S.MainJD->define(absoluteSymbols({{S.ES.intern(RipOffsetHex), {VarAddr, JITSymbolFlags::Exported}}})));
+  }
+
+  typedef struct helper_func {
+    const char *name;
+    uint64_t addr;
+  } helper_func_t;
+  helper_func_t *Ptr = (helper_func_t *)HelperFuncs;
+  for (size_t I = 0; I < (HelperFuncsSize/sizeof(helper_func_t)); ++I) {
+    auto VarAddr = llvm::orc::ExecutorAddr::fromPtr((uint64_t *)Ptr[I].addr);
+    ExitOnErr(S.MainJD->define(absoluteSymbols({{S.ES.intern(Ptr[I].name), {VarAddr, JITSymbolFlags::Exported}}})));
   }
 
   LLVM_DEBUG({
@@ -257,10 +268,11 @@ static Error addObjects(Session &S,
   return Error::success();
 }
 
-static Error addSessionInputs(Session &S, uint64_t StartCode, uint64_t EndCode) {
+static Error addSessionInputs(Session &S, uint64_t StartCode, uint64_t EndCode,
+                              void *HelperFuncs, size_t HelperFuncsSize) {
   std::map<unsigned, JITDylib *> IdxToJD;
 
-  if (auto Err = createJITDylibs(S, IdxToJD, StartCode, EndCode))
+  if (auto Err = createJITDylibs(S, IdxToJD, StartCode, EndCode, HelperFuncs, HelperFuncsSize))
     return Err;
 
   if (auto Err = addObjects(S, IdxToJD))
@@ -309,7 +321,9 @@ uint64_t parseFuncHex(const std::string& input) {
 }
 
 extern "C" {
-void *invoke_jitlink(const char *AotFile, uint64_t StartCode, uint64_t EndCode, void (*register_mapping)(uint64_t, uint64_t))
+void *invoke_jitlink(const char *AotFile, uint64_t StartCode, uint64_t EndCode,
+                     void (*register_mapping)(uint64_t, uint64_t), void *HelperFuncs,
+                     size_t HelperFuncsSize)
 {
   int argc = 5;
   const char *argv[5] = {"llvm-jitlink", "--debug-only=jitlink,llvm_jitlink,orc", "--entry=func_7fb", AotFile, "/home/felix/Github/single_thread_demo_translate/scripts/Scratch/experiment_with_jitlink/main.o"};
@@ -325,7 +339,7 @@ void *invoke_jitlink(const char *AotFile, uint64_t StartCode, uint64_t EndCode, 
   auto [TT, Features] = getFirstFileTripleAndFeatures();
   ExitOnErr(sanitizeArguments(TT, argv[0]));
   auto S = ExitOnErr(Session::Create(TT, Features));
-  ExitOnErr(addSessionInputs(*S, StartCode, EndCode));
+  ExitOnErr(addSessionInputs(*S, StartCode, EndCode, HelperFuncs, HelperFuncsSize));
 
   auto Plugin = std::make_unique<FunctionSymbolPlugin>();
   auto &PluginRef = *Plugin;
