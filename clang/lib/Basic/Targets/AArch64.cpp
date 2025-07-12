@@ -1355,6 +1355,7 @@ AArch64TargetInfo::checkCallingConvention(CallingConv CC) const {
   case CC_DeviceKernel:
   case CC_AArch64VectorCall:
   case CC_AArch64SVEPCS:
+  case CC_AArch64QEMUAOT:
   case CC_Win64:
     return CCCR_OK;
   default:

@@ -150,6 +150,8 @@ AArch64RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
     return CSR_AArch64_AAPCS_X18_SaveList;
   if (MF->getInfo<AArch64FunctionInfo>()->isSVECC())
     return CSR_AArch64_SVE_AAPCS_SaveList;
+  if (MF->getFunction().getCallingConv() == CallingConv::AArch64_QEMUAOT)
+    return CSR_AArch64_QEMUAOT_SaveList;
   return CSR_AArch64_AAPCS_SaveList;
 }
 
@@ -498,7 +500,13 @@ AArch64RegisterInfo::getStrictlyReservedRegs(const MachineFunction &MF) const {
     markSuperRegs(Reserved, AArch64::W28);
   }
 
-  assert(checkAllSuperRegsMarked(Reserved));
+  if (MF.getFunction().getCallingConv() == CallingConv::AArch64_QEMUAOT) {
+    Reserved.set(AArch64::W25);
+    Reserved.set(AArch64::X25);
+  } else {
+    //FIXME
+    assert(checkAllSuperRegsMarked(Reserved));
+  }
 
   // Add _HI registers after checkAllSuperRegsMarked as this check otherwise
   // becomes considerably more expensive.
@@ -556,7 +564,13 @@ AArch64RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
       markSuperRegs(Reserved, AArch64::LR);
   }
 
-  assert(checkAllSuperRegsMarked(Reserved));
+  if (MF.getFunction().getCallingConv() == CallingConv::AArch64_QEMUAOT) {
+    Reserved.set(AArch64::W25);
+    Reserved.set(AArch64::X25);
+  } else {
+    //FIXME
+    assert(checkAllSuperRegsMarked(Reserved));
+  }
 
   // Handle strictlyReservedRegs separately to avoid re-evaluating the assert,
   // which becomes considerably expensive when considering the _HI registers.

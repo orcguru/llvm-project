@@ -126,6 +126,38 @@ let Entry = 1 in
 def CC_AArch64_AAPCS : CallingConv<AArch64_Common>;
 
 let Entry = 1 in
+def CC_AArch64_QEMUAOT : CallingConv<[
+/// Definitions for AArch64 to emulate X86-64 ///
+//#define CONTEXT_RAX       TCG_REG_X6
+//#define CONTEXT_RCX       TCG_REG_X7
+//#define CONTEXT_RDX       TCG_REG_X8
+//#define CONTEXT_RBX       TCG_REG_X9
+//#define CONTEXT_RSP       TCG_REG_X10
+//#define CONTEXT_RBP       TCG_REG_X11
+//#define CONTEXT_RSI       TCG_REG_X12
+//#define CONTEXT_RDI       TCG_REG_X13
+//#define CONTEXT_R8        TCG_REG_X20
+//#define CONTEXT_R9        TCG_REG_X21
+//#define CONTEXT_R10       TCG_REG_X22
+//#define CONTEXT_R11       TCG_REG_X23
+//#define CONTEXT_R12       TCG_REG_X24
+//#define CONTEXT_R13       TCG_REG_X26
+//#define CONTEXT_R14       TCG_REG_X27
+//#define CONTEXT_R15       TCG_REG_X28
+//#define CONTEXT_CC_SRC    TCG_REG_X0
+//#define CONTEXT_CC_DST    TCG_REG_X1
+//#define CONTEXT_CC_OP     TCG_REG_X2
+  CCIfType<[i32], CCAssignToReg<[W6, W7, W8, W9, W10, W11, W12, W13, W20, W21, W22, W23, W24, W26, W27, W28, W0, W1, W2, W3, W4, W5, W14, W15]>>,  // For arguments
+  CCIfType<[i64], CCAssignToReg<[X6, X7, X8, X9, X10, X11, X12, X13, X20, X21, X22, X23, X24, X26, X27, X28, X0, X1, X2, X3, X4, X5, X14, X15]>>
+]>;
+
+let Entry = 1 in
+def RetCC_AArch64_QEMUAOT : CallingConv<[
+  CCIfType<[i32], CCAssignToReg<[W3, W4]>>,
+  CCIfType<[i64], CCAssignToReg<[X3, X4]>>,
+]>;
+
+let Entry = 1 in
 def RetCC_AArch64_AAPCS : CallingConv<[
   CCIfType<[iPTR], CCBitConvertToType<i64>>,
   CCIfType<[v2f32], CCBitConvertToType<v2i32>>,
@@ -563,6 +595,10 @@ def CC_AArch64_Preserve_None : CallingConv<[
 
   CCDelegateTo<CC_AArch64_AAPCS>
 ]>;
+
+def CSR_AArch64_QEMUAOT : CalleeSavedRegs<(add X19, LR, FP,
+                                            D8,  D9,  D10, D11,
+                                            D12, D13, D14, D15)>;
 
 // The order of the callee-saves in this file is important, because the
 // FrameLowering code will use this order to determine the layout the

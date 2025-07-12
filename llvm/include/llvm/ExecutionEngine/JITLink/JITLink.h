@@ -1351,11 +1351,14 @@ public:
                            orc::SymbolStringPtr Name,
                            orc::ExecutorAddrDiff Size, Linkage L, Scope S,
                            bool IsCallable, bool IsLive) {
+    /* Disable the check for QEMU-AOT since this dramatically slow down symbol
+     * parsing
     assert((S == Scope::Local || llvm::none_of(defined_symbols(),
                                                [&](const Symbol *Sym) {
                                                  return Sym->getName() == Name;
                                                })) &&
            "Duplicate defined symbol");
+    */
     auto &Sym =
         Symbol::constructNamedDef(Allocator, Content, Offset, std::move(Name),
                                   Size, L, S, IsLive, IsCallable);

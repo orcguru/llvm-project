@@ -707,6 +707,7 @@ CXCallingConv clang_getFunctionTypeCallingConv(CXType X) {
       TCALLINGCONV(X86VectorCall);
       TCALLINGCONV(AArch64VectorCall);
       TCALLINGCONV(AArch64SVEPCS);
+      TCALLINGCONV(AArch64QEMUAOT);
       TCALLINGCONV(Win64);
       TCALLINGCONV(X86_64SysV);
       TCALLINGCONV(AAPCS);
