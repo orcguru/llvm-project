@@ -286,6 +286,7 @@ namespace CallingConv {
 
     /// The special calling convention for QEMU-AOT
     AArch64_QEMUAOT = 124,
+    RISCV_QEMUAOT = 125,
 
     /// The highest possible ID. Must be some 2^k - 1.
     MaxID = 1023

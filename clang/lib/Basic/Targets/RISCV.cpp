@@ -607,6 +607,7 @@ RISCVTargetInfo::checkCallingConvention(CallingConv CC) const {
   case CC_RISCVVLSCall_16384:
   case CC_RISCVVLSCall_32768:
   case CC_RISCVVLSCall_65536:
+  case CC_RISCVQEMUAOT:
     return CCCR_OK;
   }
 }

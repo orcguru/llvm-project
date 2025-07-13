@@ -297,6 +297,7 @@ namespace clang {
     CC_AArch64VectorCall,  // __attribute__((aarch64_vector_pcs))
     CC_AArch64SVEPCS,      // __attribute__((aarch64_sve_pcs))
     CC_AArch64QEMUAOT,     // __attribute__((aarch64_qemuaot))
+    CC_RISCVQEMUAOT,       // __attribute__((riscv_qemuaot))
     CC_M68kRTD,            // __attribute__((m68k_rtd))
     CC_PreserveNone,       // __attribute__((preserve_none))
     CC_RISCVVectorCall,    // __attribute__((riscv_vector_cc))

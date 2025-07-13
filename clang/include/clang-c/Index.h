@@ -3079,6 +3079,7 @@ enum CXCallingConv {
   CXCallingConv_RISCVVLSCall_32768 = 32,
   CXCallingConv_RISCVVLSCall_65536 = 33,
   CXCallingConv_AArch64QEMUAOT = 34,
+  CXCallingConv_RISCVQEMUAOT = 35,
 
   CXCallingConv_Invalid = 100,
   CXCallingConv_Unexposed = 200

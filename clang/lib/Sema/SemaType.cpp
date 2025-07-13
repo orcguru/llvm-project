@@ -135,6 +135,7 @@ static void diagnoseBadTypeAttribute(Sema &S, const ParsedAttr &attr,
   case ParsedAttr::AT_AArch64VectorPcs:                                        \
   case ParsedAttr::AT_AArch64SVEPcs:                                           \
   case ParsedAttr::AT_AArch64QEMUAOT:                                          \
+  case ParsedAttr::AT_RISCVQEMUAOT:                                          \
   case ParsedAttr::AT_DeviceKernel:                                            \
   case ParsedAttr::AT_MSABI:                                                   \
   case ParsedAttr::AT_SysVABI:                                                 \
@@ -7529,6 +7530,8 @@ static Attr *getCCTypeAttr(ASTContext &Ctx, ParsedAttr &Attr) {
     return createSimpleAttr<AArch64SVEPcsAttr>(Ctx, Attr);
   case ParsedAttr::AT_AArch64QEMUAOT:
     return createSimpleAttr<AArch64QEMUAOTAttr>(Ctx, Attr);
+  case ParsedAttr::AT_RISCVQEMUAOT:
+    return createSimpleAttr<RISCVQEMUAOTAttr>(Ctx, Attr);
   case ParsedAttr::AT_ArmStreaming:
     return createSimpleAttr<ArmStreamingAttr>(Ctx, Attr);
   case ParsedAttr::AT_DeviceKernel:

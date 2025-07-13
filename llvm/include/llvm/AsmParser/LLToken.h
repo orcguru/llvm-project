@@ -146,6 +146,7 @@ enum Kind {
   kw_arm_aapcscc,
   kw_arm_aapcs_vfpcc,
   kw_aarch64_qemuaot,
+  kw_riscv_qemuaot,
   kw_aarch64_vector_pcs,
   kw_aarch64_sve_vector_pcs,
   kw_aarch64_sme_preservemost_from_x0,

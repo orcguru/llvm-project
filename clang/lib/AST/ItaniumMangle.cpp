@@ -3580,6 +3580,8 @@ StringRef CXXNameMangler::getCallingConvQualifierName(CallingConv CC) {
     return "swiftasynccall";
   case CC_AArch64QEMUAOT:
     return "aarch64_qemuaot";
+  case CC_RISCVQEMUAOT:
+    return "riscv_qemuaot";
   }
   llvm_unreachable("bad calling convention");
 }

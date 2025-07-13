@@ -83,6 +83,8 @@ unsigned CodeGenTypes::ClangCallConvToLLVMCallConv(CallingConv CC) {
     return llvm::CallingConv::AArch64_SVE_VectorCall;
   case CC_AArch64QEMUAOT:
     return llvm::CallingConv::AArch64_QEMUAOT;
+  case CC_RISCVQEMUAOT:
+    return llvm::CallingConv::RISCV_QEMUAOT;
   case CC_SpirFunction:
     return llvm::CallingConv::SPIR_FUNC;
   case CC_DeviceKernel:
@@ -286,6 +288,9 @@ static CallingConv getCallingConventionForDecl(const ObjCMethodDecl *D,
 
   if (D->hasAttr<AArch64QEMUAOTAttr>())
     return CC_AArch64QEMUAOT;
+
+  if (D->hasAttr<RISCVQEMUAOTAttr>())
+    return CC_RISCVQEMUAOT;
 
   if (D->hasAttr<DeviceKernelAttr>())
     return CC_DeviceKernel;
