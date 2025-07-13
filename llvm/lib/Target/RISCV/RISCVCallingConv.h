@@ -35,6 +35,14 @@ bool CC_RISCV_GHC(unsigned ValNo, MVT ValVT, MVT LocVT,
                   CCValAssign::LocInfo LocInfo, ISD::ArgFlagsTy ArgFlags,
                   CCState &State);
 
+bool CC_RISCV_QEMUAOT(unsigned ValNo, MVT ValVT, MVT LocVT,
+                  CCValAssign::LocInfo LocInfo, ISD::ArgFlagsTy ArgFlags,
+                  CCState &State);
+
+bool RetCC_RISCV_QEMUAOT(unsigned ValNo, MVT ValVT, MVT LocVT,
+                  CCValAssign::LocInfo LocInfo, ISD::ArgFlagsTy ArgFlags,
+                  CCState &State);
+
 namespace RISCV {
 
 ArrayRef<MCPhysReg> getArgGPRs(const RISCVABI::ABI ABI);

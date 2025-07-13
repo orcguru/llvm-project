@@ -808,3 +808,36 @@ bool llvm::CC_RISCV_GHC(unsigned ValNo, MVT ValVT, MVT LocVT,
   report_fatal_error("No registers left in GHC calling convention");
   return true;
 }
+
+bool llvm::CC_RISCV_QEMUAOT(unsigned ValNo, MVT ValVT, MVT LocVT,
+                        CCValAssign::LocInfo LocInfo, ISD::ArgFlagsTy ArgFlags,
+                        CCState &State) {
+  static const MCPhysReg GPRList[] = {
+    RISCV::X16, RISCV::X17, RISCV::X18, RISCV::X19, RISCV::X20, RISCV::X21, RISCV::X22, RISCV::X23,
+    RISCV::X24, RISCV::X26, RISCV::X27, RISCV::X28, RISCV::X29, RISCV::X30, RISCV::X31, RISCV::X3,
+    RISCV::X4, RISCV::X5, RISCV::X6, RISCV::X10, RISCV::X11, RISCV::X12, RISCV::X13, RISCV::X14};
+
+  if (LocVT == MVT::i32 || LocVT == MVT::i64) {
+    if (MCRegister Reg = State.AllocateReg(GPRList)) {
+      State.addLoc(CCValAssign::getReg(ValNo, ValVT, Reg, LocVT, LocInfo));
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool llvm::RetCC_RISCV_QEMUAOT(unsigned ValNo, MVT ValVT, MVT LocVT,
+                        CCValAssign::LocInfo LocInfo, ISD::ArgFlagsTy ArgFlags,
+                        CCState &State) {
+  static const MCPhysReg GPRList[] = {RISCV::X13, RISCV::X14};
+
+  if (LocVT == MVT::i32 || LocVT == MVT::i64) {
+    if (MCRegister Reg = State.AllocateReg(GPRList)) {
+      State.addLoc(CCValAssign::getReg(ValNo, ValVT, Reg, LocVT, LocInfo));
+      return false;
+    }
+  }
+
+  return true;
+}

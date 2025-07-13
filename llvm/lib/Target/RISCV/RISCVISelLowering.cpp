@@ -22151,6 +22151,7 @@ SDValue RISCVTargetLowering::LowerFormalArguments(
   case CallingConv::SPIR_KERNEL:
   case CallingConv::GRAAL:
   case CallingConv::RISCV_VectorCall:
+  case CallingConv::RISCV_QEMUAOT:
 #define CC_VLS_CASE(ABI_VLEN) case CallingConv::RISCV_VLSCall_##ABI_VLEN:
     CC_VLS_CASE(32)
     CC_VLS_CASE(64)
@@ -22221,6 +22222,8 @@ SDValue RISCVTargetLowering::LowerFormalArguments(
 
   if (CallConv == CallingConv::GHC)
     CCInfo.AnalyzeFormalArguments(Ins, CC_RISCV_GHC);
+  else if (CallConv == CallingConv::RISCV_QEMUAOT)
+    CCInfo.AnalyzeFormalArguments(Ins, CC_RISCV_QEMUAOT);
   else
     analyzeInputArgs(MF, CCInfo, Ins, /*IsRet=*/false,
                      CallConv == CallingConv::Fast ? CC_RISCV_FastCC
@@ -22694,7 +22697,10 @@ SDValue RISCVTargetLowering::LowerCall(CallLoweringInfo &CLI,
   // Assign locations to each value returned by this call.
   SmallVector<CCValAssign, 16> RVLocs;
   CCState RetCCInfo(CallConv, IsVarArg, MF, RVLocs, *DAG.getContext());
-  analyzeInputArgs(MF, RetCCInfo, Ins, /*IsRet=*/true, CC_RISCV);
+  if (CallConv == CallingConv::RISCV_QEMUAOT)
+    RetCCInfo.AnalyzeFormalArguments(Ins, RetCC_RISCV_QEMUAOT);
+  else
+    analyzeInputArgs(MF, RetCCInfo, Ins, /*IsRet=*/true, CC_RISCV);
 
   // Copy all of the result registers out of their specified physreg.
   for (unsigned i = 0, e = RVLocs.size(); i != e; ++i) {
