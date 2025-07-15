@@ -177,11 +177,14 @@ BitVector RISCVRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   // Shadow stack pointer.
   markSuperRegs(Reserved, RISCV::SSP);
 
+  Reserved.set(RISCV::X25);
+  /*
   if (MF.getFunction().getCallingConv() == CallingConv::RISCV_QEMUAOT) {
     Reserved.set(RISCV::X25);
   } else {
     assert(checkAllSuperRegsMarked(Reserved));
   }
+  */
   return Reserved;
 }
 
