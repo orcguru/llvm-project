@@ -68,6 +68,8 @@ RISCVRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   auto &Subtarget = MF->getSubtarget<RISCVSubtarget>();
   if (MF->getFunction().getCallingConv() == CallingConv::GHC)
     return CSR_NoRegs_SaveList;
+  if (MF->getFunction().getCallingConv() == CallingConv::RISCV_QEMUAOT)
+    return CSR_LP64_QEMUAOT_SaveList;
   if (MF->getFunction().hasFnAttribute("interrupt")) {
     if (Subtarget.hasVInstructions()) {
       if (Subtarget.hasStdExtD())
@@ -815,6 +817,8 @@ RISCVRegisterInfo::getCallPreservedMask(const MachineFunction & MF,
 
   if (CC == CallingConv::GHC)
     return CSR_NoRegs_RegMask;
+  if (CC == CallingConv::RISCV_QEMUAOT)
+    return CSR_LP64_QEMUAOT_RegMask;
   switch (Subtarget.getTargetABI()) {
   default:
     llvm_unreachable("Unrecognized ABI");
