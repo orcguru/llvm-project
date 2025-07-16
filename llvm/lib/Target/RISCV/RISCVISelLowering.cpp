@@ -22432,7 +22432,9 @@ SDValue RISCVTargetLowering::LowerCall(CallLoweringInfo &CLI,
     if (Subtarget.hasStdExtE())
       report_fatal_error("GHC calling convention is not supported on RVE!");
     ArgCCInfo.AnalyzeCallOperands(Outs, CC_RISCV_GHC);
-  } else
+  } else if (CallConv == CallingConv::RISCV_QEMUAOT)
+    ArgCCInfo.AnalyzeCallOperands(Outs, CC_RISCV_QEMUAOT);
+  else
     analyzeOutputArgs(MF, ArgCCInfo, Outs, /*IsRet=*/false, &CLI,
                       CallConv == CallingConv::Fast ? CC_RISCV_FastCC
                                                     : CC_RISCV);
