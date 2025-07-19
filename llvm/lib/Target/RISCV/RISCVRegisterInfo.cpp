@@ -68,7 +68,7 @@ RISCVRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   auto &Subtarget = MF->getSubtarget<RISCVSubtarget>();
   if (MF->getFunction().getCallingConv() == CallingConv::GHC)
     return CSR_NoRegs_SaveList;
-  if (MF->getFunction().getCallingConv() == CallingConv::RISCV_QEMUAOT)
+  if (MF->getFunction().getCallingConv() == CallingConv::QEMUAOT)
     return CSR_LP64_QEMUAOT_SaveList;
   if (MF->getFunction().hasFnAttribute("interrupt")) {
     if (Subtarget.hasVInstructions()) {
@@ -177,7 +177,7 @@ BitVector RISCVRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   // Shadow stack pointer.
   markSuperRegs(Reserved, RISCV::SSP);
 
-  if (MF.getFunction().getCallingConv() == CallingConv::RISCV_QEMUAOT) {
+  if (MF.getFunction().getCallingConv() == CallingConv::QEMUAOT) {
     Reserved.set(RISCV::X25);
   } else {
     assert(checkAllSuperRegsMarked(Reserved));
@@ -817,7 +817,7 @@ RISCVRegisterInfo::getCallPreservedMask(const MachineFunction & MF,
 
   if (CC == CallingConv::GHC)
     return CSR_NoRegs_RegMask;
-  if (CC == CallingConv::RISCV_QEMUAOT)
+  if (CC == CallingConv::QEMUAOT)
     return CSR_LP64_QEMUAOT_RegMask;
   switch (Subtarget.getTargetABI()) {
   default:

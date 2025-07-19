@@ -2971,14 +2971,8 @@ def AArch64SVEPcs: DeclOrTypeAttr {
   let Documentation = [AArch64SVEPcsDocs];
 }
 
-def AArch64QEMUAOT: DeclOrTypeAttr {
-  let Spellings = [Clang<"aarch64_qemuaot">];
-  // FIXME: docs
-  let Documentation = [AArch64SVEPcsDocs];
-}
-
-def RISCVQEMUAOT: DeclOrTypeAttr {
-  let Spellings = [Clang<"riscv_qemuaot">];
+def QEMUAOT: DeclOrTypeAttr {
+  let Spellings = [Clang<"qemuaot">];
   // FIXME: docs
   let Documentation = [AArch64SVEPcsDocs];
 }

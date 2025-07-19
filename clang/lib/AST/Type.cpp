@@ -3606,10 +3606,8 @@ StringRef FunctionType::getNameForCallConv(CallingConv CC) {
     return "aarch64_vector_pcs";
   case CC_AArch64SVEPCS:
     return "aarch64_sve_pcs";
-  case CC_AArch64QEMUAOT:
-    return "aarch64_qemuaot";
-  case CC_RISCVQEMUAOT:
-    return "riscv_qemuaot";
+  case CC_QEMUAOT:
+    return "qemuaot";
   case CC_IntelOclBicc:
     return "intel_ocl_bicc";
   case CC_SpirFunction:
@@ -4328,8 +4326,7 @@ bool AttributedType::isCallingConv() const {
   case attr::VectorCall:
   case attr::AArch64VectorPcs:
   case attr::AArch64SVEPcs:
-  case attr::AArch64QEMUAOT:
-  case attr::RISCVQEMUAOT:
+  case attr::QEMUAOT:
   case attr::DeviceKernel:
   case attr::Pascal:
   case attr::MSABI:

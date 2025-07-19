@@ -1100,11 +1100,8 @@ void TypePrinter::printFunctionAfter(const FunctionType::ExtInfo &Info,
     case CC_AArch64SVEPCS:
       OS << " __attribute__((aarch64_sve_pcs))";
       break;
-    case CC_AArch64QEMUAOT:
-      OS << "__attribute__((aarch64_qemuaot))";
-      break;
-    case CC_RISCVQEMUAOT:
-      OS << "__attribute__((riscv_qemuaot))";
+    case CC_QEMUAOT:
+      OS << "__attribute__((qemuaot))";
       break;
     case CC_DeviceKernel:
       OS << " __attribute__((device_kernel))";
@@ -2074,8 +2071,7 @@ void TypePrinter::printAttributedAfter(const AttributedType *T,
   }
   case attr::AArch64VectorPcs: OS << "aarch64_vector_pcs"; break;
   case attr::AArch64SVEPcs: OS << "aarch64_sve_pcs"; break;
-  case attr::AArch64QEMUAOT: OS << "aarch64_qemuaot"; break;
-  case attr::RISCVQEMUAOT: OS << "riscv_qemuaot"; break;
+  case attr::QEMUAOT: OS << "qemuaot"; break;
   case attr::DeviceKernel:
     OS << T->getAttr()->getSpelling();
     break;

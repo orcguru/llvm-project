@@ -22151,7 +22151,7 @@ SDValue RISCVTargetLowering::LowerFormalArguments(
   case CallingConv::SPIR_KERNEL:
   case CallingConv::GRAAL:
   case CallingConv::RISCV_VectorCall:
-  case CallingConv::RISCV_QEMUAOT:
+  case CallingConv::QEMUAOT:
 #define CC_VLS_CASE(ABI_VLEN) case CallingConv::RISCV_VLSCall_##ABI_VLEN:
     CC_VLS_CASE(32)
     CC_VLS_CASE(64)
@@ -22222,7 +22222,7 @@ SDValue RISCVTargetLowering::LowerFormalArguments(
 
   if (CallConv == CallingConv::GHC)
     CCInfo.AnalyzeFormalArguments(Ins, CC_RISCV_GHC);
-  else if (CallConv == CallingConv::RISCV_QEMUAOT)
+  else if (CallConv == CallingConv::QEMUAOT)
     CCInfo.AnalyzeFormalArguments(Ins, CC_RISCV_QEMUAOT);
   else
     analyzeInputArgs(MF, CCInfo, Ins, /*IsRet=*/false,
@@ -22432,7 +22432,7 @@ SDValue RISCVTargetLowering::LowerCall(CallLoweringInfo &CLI,
     if (Subtarget.hasStdExtE())
       report_fatal_error("GHC calling convention is not supported on RVE!");
     ArgCCInfo.AnalyzeCallOperands(Outs, CC_RISCV_GHC);
-  } else if (CallConv == CallingConv::RISCV_QEMUAOT)
+  } else if (CallConv == CallingConv::QEMUAOT)
     ArgCCInfo.AnalyzeCallOperands(Outs, CC_RISCV_QEMUAOT);
   else
     analyzeOutputArgs(MF, ArgCCInfo, Outs, /*IsRet=*/false, &CLI,
@@ -22699,7 +22699,7 @@ SDValue RISCVTargetLowering::LowerCall(CallLoweringInfo &CLI,
   // Assign locations to each value returned by this call.
   SmallVector<CCValAssign, 16> RVLocs;
   CCState RetCCInfo(CallConv, IsVarArg, MF, RVLocs, *DAG.getContext());
-  if (CallConv == CallingConv::RISCV_QEMUAOT)
+  if (CallConv == CallingConv::QEMUAOT)
     RetCCInfo.AnalyzeFormalArguments(Ins, RetCC_RISCV_QEMUAOT);
   else
     analyzeInputArgs(MF, RetCCInfo, Ins, /*IsRet=*/true, CC_RISCV);

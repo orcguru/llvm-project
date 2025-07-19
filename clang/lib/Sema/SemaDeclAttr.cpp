@@ -5320,11 +5320,8 @@ static void handleCallConvAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
   case ParsedAttr::AT_AArch64SVEPcs:
     D->addAttr(::new (S.Context) AArch64SVEPcsAttr(S.Context, AL));
     return;
-  case ParsedAttr::AT_AArch64QEMUAOT:
-    D->addAttr(::new (S.Context) AArch64QEMUAOTAttr(S.Context, AL));
-    return;
-  case ParsedAttr::AT_RISCVQEMUAOT:
-    D->addAttr(::new (S.Context) RISCVQEMUAOTAttr(S.Context, AL));
+  case ParsedAttr::AT_QEMUAOT:
+    D->addAttr(::new (S.Context) QEMUAOTAttr(S.Context, AL));
     return;
   case ParsedAttr::AT_DeviceKernel: {
     // The attribute should already be applied.
@@ -5564,11 +5561,8 @@ bool Sema::CheckCallingConvAttr(const ParsedAttr &Attrs, CallingConv &CC,
   case ParsedAttr::AT_AArch64SVEPcs:
     CC = CC_AArch64SVEPCS;
     break;
-  case ParsedAttr::AT_AArch64QEMUAOT:
-    CC = CC_AArch64QEMUAOT;
-    break;
-  case ParsedAttr::AT_RISCVQEMUAOT:
-    CC = CC_RISCVQEMUAOT;
+  case ParsedAttr::AT_QEMUAOT:
+    CC = CC_QEMUAOT;
     break;
   case ParsedAttr::AT_RegCall:
     CC = CC_X86RegCall;
@@ -7554,8 +7548,7 @@ ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D, const ParsedAttr &AL,
   case ParsedAttr::AT_PreserveAll:
   case ParsedAttr::AT_AArch64VectorPcs:
   case ParsedAttr::AT_AArch64SVEPcs:
-  case ParsedAttr::AT_AArch64QEMUAOT:
-  case ParsedAttr::AT_RISCVQEMUAOT:
+  case ParsedAttr::AT_QEMUAOT:
   case ParsedAttr::AT_M68kRTD:
   case ParsedAttr::AT_PreserveNone:
   case ParsedAttr::AT_RISCVVectorCC:

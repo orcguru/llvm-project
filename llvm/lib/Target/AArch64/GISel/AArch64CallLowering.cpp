@@ -830,7 +830,7 @@ bool AArch64CallLowering::lowerFormalArguments(
 static bool canGuaranteeTCO(CallingConv::ID CC, bool GuaranteeTailCalls) {
   return (CC == CallingConv::Fast && GuaranteeTailCalls) ||
          CC == CallingConv::Tail || CC == CallingConv::SwiftTail ||
-         CC == CallingConv::AArch64_QEMUAOT;
+         CC == CallingConv::QEMUAOT;
 }
 
 /// Return true if we might ever do TCO for calls with this calling convention.
@@ -844,7 +844,7 @@ static bool mayTailCallThisCC(CallingConv::ID CC) {
   case CallingConv::SwiftTail:
   case CallingConv::Tail:
   case CallingConv::Fast:
-  case CallingConv::AArch64_QEMUAOT:
+  case CallingConv::QEMUAOT:
     return true;
   default:
     return false;

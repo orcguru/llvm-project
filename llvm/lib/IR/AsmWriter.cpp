@@ -358,8 +358,7 @@ static void PrintCallingConv(unsigned cc, raw_ostream &Out) {
   case CallingConv::ARM_APCS:      Out << "arm_apcscc"; break;
   case CallingConv::ARM_AAPCS:     Out << "arm_aapcscc"; break;
   case CallingConv::ARM_AAPCS_VFP: Out << "arm_aapcs_vfpcc"; break;
-  case CallingConv::AArch64_QEMUAOT:    Out << "aarch64_qemuaot"; break;
-  case CallingConv::RISCV_QEMUAOT:    Out << "riscv_qemuaot"; break;
+  case CallingConv::QEMUAOT:    Out << "qemuaot"; break;
   case CallingConv::AArch64_VectorCall: Out << "aarch64_vector_pcs"; break;
   case CallingConv::AArch64_SVE_VectorCall:
     Out << "aarch64_sve_vector_pcs";
