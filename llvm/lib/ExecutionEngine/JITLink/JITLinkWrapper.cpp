@@ -223,6 +223,10 @@ static Error createJITDylibs(Session &S,
   for (size_t I = 0; I < (HelperFuncsSize/sizeof(helper_func_t)); ++I) {
     auto VarAddr = llvm::orc::ExecutorAddr::fromPtr((uint64_t *)Ptr[I].addr);
     ExitOnErr(S.MainJD->define(absoluteSymbols({{S.ES.intern(Ptr[I].name), {VarAddr, JITSymbolFlags::Exported}}})));
+    // Hack to get rid of main
+    if (I == 0) {
+      ExitOnErr(S.MainJD->define(absoluteSymbols({{S.ES.intern("main"), {VarAddr, JITSymbolFlags::Exported}}})));
+    }
   }
 
   LLVM_DEBUG({
