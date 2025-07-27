@@ -468,6 +468,10 @@ template <typename ELFT> Error ELFLinkGraphBuilder<ELFT>::graphifySymbols() {
     if (!Name)
       return Name.takeError();
 
+    if (*Name == "$x" or *Name == "$d") {
+      LLVM_DEBUG(dbgs() << "Skipping special symbol " << *Name << "\"\n");
+      continue;
+    }
     // Handle common symbols specially.
     if (Sym.isCommon()) {
       Symbol &GSym = G->addDefinedSymbol(
