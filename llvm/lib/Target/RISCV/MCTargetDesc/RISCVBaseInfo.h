@@ -210,7 +210,9 @@ static inline MCRegister
 getTailExpandUseRegNo(const FeatureBitset &FeatureBits) {
   // For Zicfilp, PseudoTAIL should be expanded to a software guarded branch.
   // It means to use t2(x7) as rs1 of JALR to expand PseudoTAIL.
-  return FeatureBits[RISCV::FeatureStdExtZicfilp] ? RISCV::X7 : RISCV::X6;
+  //return FeatureBits[RISCV::FeatureStdExtZicfilp] ? RISCV::X7 : RISCV::X6;
+  // FIXME: X6 is used as cc_op for QEMUAOT, use X7 instead
+  return RISCV::X7;
 }
 
 static inline unsigned getSEWOpNum(const MCInstrDesc &Desc) {
