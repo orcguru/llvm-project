@@ -120,6 +120,9 @@ void RISCVABIInfo::computeInfo(CGFunctionInfo &FI) const {
   default:
     ABIVLen = 0;
     break;
+  case CallingConv::CC_QEMUAOT:
+    ABIVLen = 128;
+    break;
 #define CC_VLS_CASE(ABI_VLEN)                                                  \
   case CallingConv::CC_RISCVVLSCall_##ABI_VLEN:                                \
     ABIVLen = ABI_VLEN;                                                        \
