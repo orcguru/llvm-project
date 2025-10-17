@@ -207,14 +207,6 @@ static Error createJITDylibs(Session &S,
   S.JDSearchOrder.push_back({S.MainJD, JITDylibLookupFlags::MatchAllSymbols});
   LLVM_DEBUG(dbgs() << "  0: " << S.MainJD->getName() << "\n");
 
-  for (uint64_t Instr = StartCode; Instr < End; ++Instr) {
-    auto VarAddr = llvm::orc::ExecutorAddr::fromPtr((uint64_t *)Instr);
-    char RipOffsetHex[64] = {0};
-    sprintf(RipOffsetHex, "RIP_OFFSET_0x%lx", (Instr - StartCode));
-    LLVM_DEBUG(dbgs() << RipOffsetHex << " " << formatv("{0:x16}", Instr) << "\n");
-    ExitOnErr(S.MainJD->define(absoluteSymbols({{S.ES.intern(RipOffsetHex), {VarAddr, JITSymbolFlags::Exported}}})));
-  }
-
   typedef struct helper_func {
     const char *name;
     uint64_t addr;
