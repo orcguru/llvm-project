@@ -295,9 +295,7 @@ static Expected<ExecutorSymbolDef> getEntryPoint(Session &S) {
 uint64_t parseFuncHex(const std::string& input) {
   const std::string prefix = "func_";
   size_t prefixPos = input.find(prefix);
-  if (prefixPos == std::string::npos) {
-    return 0;
-  }
+  assert(prefixPos != std::string::npos);
   std::string hexStr = input.substr(prefixPos + prefix.length());
   if (hexStr.empty())
     return 0;
@@ -312,8 +310,8 @@ uint64_t parseFuncHex(const std::string& input) {
 
 extern "C" {
 void *invoke_jitlink(const char *AotFile, uint64_t StartCode, uint64_t End,
-                     void (*register_mapping)(uint64_t, uint64_t), void *HelperFuncs,
-                     size_t HelperFuncsCnt, int enable_llvm_debug)
+                     void (*register_mapping)(uint64_t, uint64_t), void (*log_mapping)(const char *, uint64_t),
+                     void *HelperFuncs, size_t HelperFuncsCnt, int enable_llvm_debug)
 {
   int argc = enable_llvm_debug ? 4 : 3;
   const char *argv[4] = {"llvm-jitlink", "--entry=func_7b0", AotFile, enable_llvm_debug ? "--debug-only=jitlink,llvm_jitlink,orc" : ""};
@@ -341,13 +339,19 @@ void *invoke_jitlink(const char *AotFile, uint64_t StartCode, uint64_t End,
     exit(1);
   }
 
+  const std::string valid_prefix = "func_";
+  const std::string invalid_subcall = "_call";
   for (const auto &[Name, Address] : PluginRef.FunctionSymbols) {
     Expected<ExecutorSymbolDef> Sym = S->ES.lookup(S->JDSearchOrder, S->ES.intern(Name));
     if (!Sym) {
       reportLLVMJITLinkError(EntryPoint.takeError());
       exit(1);
     }
-    register_mapping((StartCode + parseFuncHex(Name)), Sym->getAddress().getValue());
+    if (Name.find(valid_prefix) != std::string::npos && Name.find(invalid_subcall) == std::string::npos) {
+      register_mapping((StartCode + parseFuncHex(Name)), Sym->getAddress().getValue());
+    } else {
+      log_mapping((const char *)Name.c_str(), Sym->getAddress().getValue());
+    }
   }
 
   return static_cast<void *>(S.release());
