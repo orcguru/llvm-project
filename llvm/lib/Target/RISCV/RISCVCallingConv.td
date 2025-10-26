@@ -27,7 +27,7 @@ def CSR_ILP32D_LP64D
                        F8_D, F9_D, (sequence "F%u_D", 18, 27))>;
 
 def CSR_LP64_QEMUAOT
-    : CalleeSavedRegs<(add X1, X8, X9)>;
+    : CalleeSavedRegs<(add X1, X8)>;
 
 defvar CSR_V = (add (sequence "V%u", 1, 7), (sequence "V%u", 24, 31),
                      V2M2, V4M2, V6M2, V24M2, V26M2, V28M2, V30M2,
