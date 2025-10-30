@@ -620,6 +620,10 @@ bool AArch64RegisterInfo::isAsmClobberable(const MachineFunction &MF,
   if (PhysReg == AArch64::ZA || PhysReg == AArch64::ZT0)
     return true;
 
+  if (MF.getFunction().getCallingConv() == CallingConv::QEMUAOT &&
+        MCRegisterInfo::regsOverlap(PhysReg, AArch64::X25))
+    return true;
+
   return !isReservedReg(MF, PhysReg);
 }
 
