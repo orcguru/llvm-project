@@ -602,9 +602,7 @@ def CC_AArch64_Preserve_None : CallingConv<[
   CCDelegateTo<CC_AArch64_AAPCS>
 ]>;
 
-def CSR_AArch64_QEMUAOT : CalleeSavedRegs<(add LR, FP,
-                                            D8,  D9,  D10, D11,
-                                            D12, D13, D14, D15)>;
+def CSR_AArch64_QEMUAOT : CalleeSavedRegs<(add LR, FP)>;
 
 // The order of the callee-saves in this file is important, because the
 // FrameLowering code will use this order to determine the layout the
