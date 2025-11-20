@@ -847,7 +847,7 @@ bool llvm::CC_RISCV_QEMUAOT(unsigned ValNo, MVT ValVT, MVT LocVT,
 bool llvm::RetCC_RISCV_QEMUAOT(unsigned ValNo, MVT ValVT, MVT LocVT,
                         CCValAssign::LocInfo LocInfo, ISD::ArgFlagsTy ArgFlags,
                         CCState &State) {
-  static const MCPhysReg GPRList[] = {RISCV::X13, RISCV::X14};
+  static const MCPhysReg GPRList[] = {RISCV::X11, RISCV::X12};
 
   if (LocVT == MVT::i32 || LocVT == MVT::i64) {
     if (MCRegister Reg = State.AllocateReg(GPRList)) {

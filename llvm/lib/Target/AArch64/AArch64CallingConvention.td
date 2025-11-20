@@ -148,6 +148,7 @@ def CC_AArch64_QEMUAOT : CallingConv<[
 //#define CONTEXT_CC_DST    TCG_REG_X1
 //#define CONTEXT_CC_OP     TCG_REG_X2
 //#define CONTEXT_RIP       TCG_REG_X3
+  CCIfType<[i1, i8, i16], CCPromoteToType<i32>>,
   CCIfType<[i32], CCAssignToReg<[W6, W7, W8, W9, W10, W11, W12, W13, W20, W21, W22, W23, W24, W26, W27, W28, W0, W1, W2, W3, W4, W5, W14, W15, W19]>>,  // For arguments
   CCIfType<[i64], CCAssignToReg<[X6, X7, X8, X9, X10, X11, X12, X13, X20, X21, X22, X23, X24, X26, X27, X28, X0, X1, X2, X3, X4, X5, X14, X15, X19]>>,
   CCIfType<[nxv16i8, nxv8i16, nxv4i32, nxv2i64, nxv2f16, nxv4f16, nxv8f16,
@@ -159,8 +160,9 @@ def CC_AArch64_QEMUAOT : CallingConv<[
 
 let Entry = 1 in
 def RetCC_AArch64_QEMUAOT : CallingConv<[
-  CCIfType<[i32], CCAssignToReg<[W3, W4]>>,
-  CCIfType<[i64], CCAssignToReg<[X3, X4]>>,
+  CCIfType<[i1, i8, i16], CCPromoteToType<i32>>,
+  CCIfType<[i32], CCAssignToReg<[W4, W5]>>,
+  CCIfType<[i64], CCAssignToReg<[X4, X5]>>,
 ]>;
 
 let Entry = 1 in
