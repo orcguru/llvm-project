@@ -163,6 +163,9 @@ def RetCC_AArch64_QEMUAOT : CallingConv<[
   CCIfType<[i1, i8, i16], CCPromoteToType<i32>>,
   CCIfType<[i32], CCAssignToReg<[W19, W15]>>,
   CCIfType<[i64], CCAssignToReg<[X19, X15]>>,
+  CCIfType<[v2i64, v4i32, v8i16, v16i8], CCAssignToReg<[Q30, Q31]>>,
+  CCIfType<[nxv16i8, nxv8i16, nxv4i32, nxv2i64, nxv2f16, nxv4f16, nxv8f16,
+            nxv2bf16, nxv4bf16, nxv8bf16, nxv2f32, nxv4f32, nxv2f64], CCAssignToReg<[Z30, Z31]>>
 ]>;
 
 let Entry = 1 in
