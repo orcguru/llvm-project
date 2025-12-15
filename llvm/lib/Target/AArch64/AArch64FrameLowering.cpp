@@ -1895,7 +1895,8 @@ void AArch64FrameLowering::emitPrologue(MachineFunction &MF,
 
   // All calls are tail calls in GHC calling conv, and functions have no
   // prologue/epilogue.
-  if (MF.getFunction().getCallingConv() == CallingConv::GHC)
+  if (MF.getFunction().getCallingConv() == CallingConv::GHC ||
+      MF.getFunction().getCallingConv() == CallingConv::QEMUAOT)
     return;
 
   // Set tagged base pointer to the requested stack slot.
@@ -2422,7 +2423,8 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
 
   // All calls are tail calls in GHC calling conv, and functions have no
   // prologue/epilogue.
-  if (MF.getFunction().getCallingConv() == CallingConv::GHC)
+  if (MF.getFunction().getCallingConv() == CallingConv::GHC ||
+      MF.getFunction().getCallingConv() == CallingConv::QEMUAOT)
     return;
 
   // How much of the stack used by incoming arguments this function is expected
@@ -3836,7 +3838,8 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
                                                 RegScavenger *RS) const {
   // All calls are tail calls in GHC calling conv, and functions have no
   // prologue/epilogue.
-  if (MF.getFunction().getCallingConv() == CallingConv::GHC)
+  if (MF.getFunction().getCallingConv() == CallingConv::GHC ||
+      MF.getFunction().getCallingConv() == CallingConv::QEMUAOT)
     return;
 
   TargetFrameLowering::determineCalleeSaves(MF, SavedRegs, RS);
