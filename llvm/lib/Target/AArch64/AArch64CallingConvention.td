@@ -149,8 +149,8 @@ def CC_AArch64_QEMUAOT : CallingConv<[
 //#define CONTEXT_CC_OP     TCG_REG_X2
 //#define CONTEXT_RIP       TCG_REG_X3
   CCIfType<[i1, i8, i16], CCPromoteToType<i32>>,
-  CCIfType<[i32], CCAssignToReg<[W6, W7, W8, W9, W10, W11, W12, W13, W20, W21, W22, W23, W24, W26, W27, W28, W0, W1, W2, W3, W4, W5, W14, W15, W19]>>,  // For arguments
-  CCIfType<[i64], CCAssignToReg<[X6, X7, X8, X9, X10, X11, X12, X13, X20, X21, X22, X23, X24, X26, X27, X28, X0, X1, X2, X3, X4, X5, X14, X15, X19]>>,
+  CCIfType<[i32], CCAssignToReg<[W6, W7, W8, W9, W10, W11, W12, W13, W20, W21, W22, W23, W24, W26, W27, W28, W0, W1, W2, W3, W4, W5, W14, W15, W19, W18]>>,  // For arguments
+  CCIfType<[i64], CCAssignToReg<[X6, X7, X8, X9, X10, X11, X12, X13, X20, X21, X22, X23, X24, X26, X27, X28, X0, X1, X2, X3, X4, X5, X14, X15, X19, X18]>>,
   CCIfType<[nxv16i8, nxv8i16, nxv4i32, nxv2i64, nxv2f16, nxv4f16, nxv8f16,
             nxv2bf16, nxv4bf16, nxv8bf16, nxv2f32, nxv4f32, nxv2f64],
            CCAssignToReg<[Z0, Z1, Z2, Z3, Z4, Z5, Z6, Z7, Z8, Z9, Z10, Z11, Z12, Z13, Z14, Z15, Z16, Z17, Z18, Z19, Z20, Z21, Z22, Z23, Z24, Z25, Z26, Z27, Z28, Z29, Z30, Z31]>>,
