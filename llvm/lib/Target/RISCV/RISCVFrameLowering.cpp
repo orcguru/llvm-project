@@ -908,7 +908,8 @@ void RISCVFrameLowering::emitPrologue(MachineFunction &MF,
 
   // All calls are tail calls in GHC calling conv, and functions have no
   // prologue/epilogue.
-  if (MF.getFunction().getCallingConv() == CallingConv::GHC)
+  if (MF.getFunction().getCallingConv() == CallingConv::GHC ||
+      MF.getFunction().getCallingConv() == CallingConv::QEMUAOT)
     return;
 
   // SiFive CLIC needs to swap `sp` into `sf.mscratchcsw`
@@ -1184,7 +1185,8 @@ void RISCVFrameLowering::emitEpilogue(MachineFunction &MF,
 
   // All calls are tail calls in GHC calling conv, and functions have no
   // prologue/epilogue.
-  if (MF.getFunction().getCallingConv() == CallingConv::GHC)
+  if (MF.getFunction().getCallingConv() == CallingConv::GHC ||
+      MF.getFunction().getCallingConv() == CallingConv::QEMUAOT)
     return;
 
   // Get the insert location for the epilogue. If there were no terminators in
@@ -1519,6 +1521,12 @@ RISCVFrameLowering::getFrameIndexReference(const MachineFunction &MF, int FI,
 void RISCVFrameLowering::determineCalleeSaves(MachineFunction &MF,
                                               BitVector &SavedRegs,
                                               RegScavenger *RS) const {
+  // All calls are tail calls in GHC calling conv, and functions have no
+  // prologue/epilogue.
+  if (MF.getFunction().getCallingConv() == CallingConv::GHC ||
+      MF.getFunction().getCallingConv() == CallingConv::QEMUAOT)
+    return;
+
   TargetFrameLowering::determineCalleeSaves(MF, SavedRegs, RS);
   // Unconditionally spill RA and FP only if the function uses a frame
   // pointer.

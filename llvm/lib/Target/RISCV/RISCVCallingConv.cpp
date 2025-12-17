@@ -817,8 +817,8 @@ bool llvm::CC_RISCV_QEMUAOT(unsigned ValNo, MVT ValVT, MVT LocVT,
     RISCV::X16, RISCV::X17, RISCV::X18, RISCV::X19, RISCV::X20, RISCV::X21, RISCV::X22, RISCV::X23,
     /* s8/r8     s10/r9      s11/r10      s1/r11      t4/r12      t5/r13      t6/r14      gp/r15 */
     RISCV::X24, RISCV::X26, RISCV::X27, RISCV::X9, RISCV::X29, RISCV::X30, RISCV::X31, RISCV::X3,
-    /* a5/src    t0/dst      t1/op        a0/rip   ARGV0/a1    ARGV1/a2    ARGV2/a3    ARGV3/a4    ARGV4/t3 */
-    RISCV::X15, RISCV::X5, RISCV::X6, RISCV::X10, RISCV::X11, RISCV::X12, RISCV::X13, RISCV::X14, RISCV::X28};
+    /* a5/src    t0/dst      t1/op        a0/rip   ARGV0/a1    ARGV1/a2    ARGV2/a3    ARGV3/a4    ARGV4/t3    ARGV5/tp */
+    RISCV::X15, RISCV::X5, RISCV::X6, RISCV::X10, RISCV::X11, RISCV::X12, RISCV::X13, RISCV::X14, RISCV::X28, RISCV::X4};
 
   if (LocVT == MVT::i32 || LocVT == MVT::i64) {
     if (MCRegister Reg = State.AllocateReg(GPRList)) {
