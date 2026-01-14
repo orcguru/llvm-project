@@ -308,19 +308,24 @@ uint64_t parseFuncHex(const std::string& input) {
   return std::stoull(hexStr, nullptr, 16);
 }
 
+int invoke_jitlink_init_done = 0;
+
 extern "C" {
 void *invoke_jitlink(const char *AotFile, uint64_t StartCode, uint64_t End,
                      void (*register_mapping)(uint64_t, uint64_t), void (*log_mapping)(const char *, uint64_t),
                      void *HelperFuncs, size_t HelperFuncsCnt, int enable_llvm_debug)
 {
-  int argc = enable_llvm_debug ? 4 : 3;
-  const char *argv[4] = {"llvm-jitlink", "--entry=func_7b0", AotFile, enable_llvm_debug ? "--debug-only=jitlink,llvm_jitlink,orc" : ""};
+  int argc = enable_llvm_debug ? 3 : 2;
+  const char *argv[3] = {"llvm-jitlink", AotFile, enable_llvm_debug ? "--debug-only=jitlink,llvm_jitlink,orc" : ""};
   char **argv_convert = (char **)argv;
-  InitLLVM X(argc, argv_convert);
+  static InitLLVM X(argc, argv_convert);
 
-  InitializeAllTargetInfos();
-  InitializeAllTargetMCs();
-  InitializeAllDisassemblers();
+  if (!invoke_jitlink_init_done) {
+    InitializeAllTargetInfos();
+    InitializeAllTargetMCs();
+    InitializeAllDisassemblers();
+    invoke_jitlink_init_done = 1;
+  }
 
   cl::ParseCommandLineOptions(argc, argv, "llvm jitlink tool");
   ExitOnErr.setBanner(std::string(argv[0]) + ": ");
