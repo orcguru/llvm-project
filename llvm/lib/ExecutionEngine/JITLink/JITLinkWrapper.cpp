@@ -47,7 +47,7 @@ public:
                         llvm::jitlink::LinkGraph &G,
                         llvm::jitlink::PassConfiguration &Config) override {
     for (auto *Sym : G.defined_symbols())
-      if (Sym->hasName() && Sym->isCallable() && ((*Sym->getName()).starts_with("func_") || (*Sym->getName()).starts_with("trampoline")))
+      if (Sym->hasName() && Sym->isCallable() && ((*Sym->getName()).contains("func_") || (*Sym->getName()).starts_with("trampoline")))
         FunctionSymbols.emplace_back((*Sym->getName()).str(), Sym->getAddress().getValue());
   }
 
@@ -313,10 +313,10 @@ int invoke_jitlink_init_done = 0;
 extern "C" {
 void *invoke_jitlink(const char *AotFile, uint64_t StartCode, uint64_t End,
                      void (*register_mapping)(uint64_t, uint64_t), void (*log_mapping)(const char *, uint64_t),
-                     void *HelperFuncs, size_t HelperFuncsCnt, int enable_llvm_debug)
+                     void *HelperFuncs, size_t HelperFuncsCnt, int enable_llvm_debug, const char *entry)
 {
-  int argc = enable_llvm_debug ? 3 : 2;
-  const char *argv[3] = {"llvm-jitlink", AotFile, enable_llvm_debug ? "--debug-only=jitlink,llvm_jitlink,orc" : ""};
+  int argc = enable_llvm_debug ? 4 : 3;
+  const char *argv[4] = {"llvm-jitlink", entry, AotFile, enable_llvm_debug ? "--debug-only=jitlink,llvm_jitlink,orc" : ""};
   char **argv_convert = (char **)argv;
   static InitLLVM X(argc, argv_convert);
 
