@@ -349,7 +349,7 @@ void *invoke_jitlink(const char *AotFile, uint64_t StartCode, uint64_t End,
   for (const auto &[Name, Address] : PluginRef.FunctionSymbols) {
     Expected<ExecutorSymbolDef> Sym = S->ES.lookup(S->JDSearchOrder, S->ES.intern(Name));
     if (!Sym) {
-      reportLLVMJITLinkError(EntryPoint.takeError());
+      reportLLVMJITLinkError(Sym.takeError());
       exit(1);
     }
     if (Name.find(valid_prefix) != std::string::npos && Name.find(invalid_subcall) == std::string::npos) {
