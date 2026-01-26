@@ -47,7 +47,7 @@ public:
                         llvm::jitlink::LinkGraph &G,
                         llvm::jitlink::PassConfiguration &Config) override {
     for (auto *Sym : G.defined_symbols())
-      if (Sym->hasName() && Sym->isCallable() && ((*Sym->getName()).contains("func_") || (*Sym->getName()).starts_with("trampoline")))
+      if (Sym->hasName() && Sym->isCallable() && ((*Sym->getName()).contains("func_") || (*Sym->getName()).contains("trampoline")))
         FunctionSymbols.emplace_back((*Sym->getName()).str(), Sym->getAddress().getValue());
   }
 
@@ -312,7 +312,7 @@ int invoke_jitlink_init_done = 0;
 
 extern "C" {
 void *invoke_jitlink(const char *AotFile, uint64_t StartCode, uint64_t End,
-                     void (*register_mapping)(uint64_t, uint64_t), void (*log_mapping)(const char *, uint64_t),
+                     void (*register_mapping)(uint64_t, uint64_t, uint64_t), void (*log_mapping)(const char *, uint64_t),
                      void *HelperFuncs, size_t HelperFuncsCnt, int enable_llvm_debug, const char *entry)
 {
   int argc = enable_llvm_debug ? 4 : 3;
@@ -353,7 +353,7 @@ void *invoke_jitlink(const char *AotFile, uint64_t StartCode, uint64_t End,
       exit(1);
     }
     if (Name.find(valid_prefix) != std::string::npos && Name.find(invalid_subcall) == std::string::npos) {
-      register_mapping((StartCode + parseFuncHex(Name)), Sym->getAddress().getValue());
+      register_mapping(StartCode, parseFuncHex(Name), Sym->getAddress().getValue());
     } else {
       log_mapping((const char *)Name.c_str(), Sym->getAddress().getValue());
     }
