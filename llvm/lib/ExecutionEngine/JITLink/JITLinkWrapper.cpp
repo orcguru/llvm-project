@@ -37,6 +37,7 @@ static cl::list<std::string> InputArgv("args", cl::Positional,
                                        cl::cat(JITLinkCategory));
 
 static ExitOnError ExitOnErr;
+static std::set<std::string> processedSymbols;
 
 class FunctionSymbolPlugin : public llvm::orc::ObjectLinkingLayer::Plugin {
 public:
@@ -47,8 +48,11 @@ public:
                         llvm::jitlink::LinkGraph &G,
                         llvm::jitlink::PassConfiguration &Config) override {
     for (auto *Sym : G.defined_symbols())
-      if (Sym->hasName() && Sym->isCallable() && ((*Sym->getName()).contains("func_") || (*Sym->getName()).contains("trampoline") || (*Sym->getName()).starts_with("helper_")))
-        FunctionSymbols.emplace_back((*Sym->getName()).str(), Sym->getAddress().getValue());
+      if (Sym->hasName() && Sym->isCallable() && processedSymbols.find((*Sym->getName()).str()) == processedSymbols.end()) {
+        if (Sym->hasName() && Sym->isCallable() && ((*Sym->getName()).contains("func_") || (*Sym->getName()).contains("trampoline") || (*Sym->getName()).starts_with("helper_")))
+          FunctionSymbols.emplace_back((*Sym->getName()).str(), Sym->getAddress().getValue());
+        processedSymbols.insert((*Sym->getName()).str());
+      }
   }
 
   // Mandatory overrides (no-op if unused)
@@ -146,7 +150,9 @@ Session::Session(std::unique_ptr<ExecutorProcessControl> EPC, Error &Err)
 
   ES.setErrorReporter(reportLLVMJITLinkError);
 
-  if (auto MainJDOrErr = ES.createJITDylib("main"))
+  static std::atomic<uint64_t> sessionCounter{0};
+  std::string jdName = "aot_session_" + std::to_string(sessionCounter++);
+  if (auto MainJDOrErr = ES.createJITDylib(jdName))
     MainJD = &*MainJDOrErr;
   else {
     Err = MainJDOrErr.takeError();
@@ -187,15 +193,6 @@ static std::pair<Triple, SubtargetFeatures> getFirstFileTripleAndFeatures() {
   return FirstTTAndFeatures;
 }
 
-static Error sanitizeArguments(const Triple &TT, const char *ArgV0) {
-
-  // Set the entry point name if not specified.
-  if (EntryPointName.empty())
-    EntryPointName = TT.getObjectFormat() == Triple::MachO ? "_main" : "main";
-
-  return Error::success();
-}
-
 static Error createJITDylibs(Session &S,
                              std::map<unsigned, JITDylib *> &IdxToJD,
                              uint64_t StartCode, uint64_t End,
@@ -215,10 +212,6 @@ static Error createJITDylibs(Session &S,
   for (size_t I = 0; I < HelperFuncsCnt; ++I) {
     auto VarAddr = llvm::orc::ExecutorAddr::fromPtr((uint64_t *)Ptr[I].addr);
     ExitOnErr(S.MainJD->define(absoluteSymbols({{S.ES.intern(Ptr[I].name), {VarAddr, JITSymbolFlags::Exported}}})));
-    // Hack to get rid of main
-    if (I == 0) {
-      ExitOnErr(S.MainJD->define(absoluteSymbols({{S.ES.intern("main"), {VarAddr, JITSymbolFlags::Exported}}})));
-    }
   }
 
   LLVM_DEBUG({
@@ -330,7 +323,6 @@ void *invoke_jitlink(const char *AotFile, uint64_t StartCode, uint64_t End,
   cl::ParseCommandLineOptions(argc, argv, "llvm jitlink tool");
   ExitOnErr.setBanner(std::string(argv[0]) + ": ");
   auto [TT, Features] = getFirstFileTripleAndFeatures();
-  ExitOnErr(sanitizeArguments(TT, argv[0]));
   auto S = ExitOnErr(Session::Create(TT, Features));
   ExitOnErr(addSessionInputs(*S, StartCode, End, HelperFuncs, HelperFuncsCnt));
 
