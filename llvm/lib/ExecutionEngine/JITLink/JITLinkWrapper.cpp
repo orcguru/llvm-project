@@ -47,7 +47,7 @@ public:
                         llvm::jitlink::LinkGraph &G,
                         llvm::jitlink::PassConfiguration &Config) override {
     for (auto *Sym : G.defined_symbols())
-      if (Sym->hasName() && Sym->isCallable() && ((*Sym->getName()).contains("func_") || (*Sym->getName()).contains("trampoline")))
+      if (Sym->hasName() && Sym->isCallable() && ((*Sym->getName()).contains("func_") || (*Sym->getName()).contains("trampoline") || (*Sym->getName()).starts_with("helper_")))
         FunctionSymbols.emplace_back((*Sym->getName()).str(), Sym->getAddress().getValue());
   }
 
