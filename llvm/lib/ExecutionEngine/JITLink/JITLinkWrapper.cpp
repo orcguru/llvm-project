@@ -195,13 +195,12 @@ static std::pair<Triple, SubtargetFeatures> getFirstFileTripleAndFeatures() {
 
 static Error createJITDylibs(Session &S,
                              std::map<unsigned, JITDylib *> &IdxToJD,
-                             uint64_t StartCode, uint64_t End,
                              void *HelperFuncs, size_t HelperFuncsCnt) {
   // First, set up JITDylibs.
   LLVM_DEBUG(dbgs() << "Creating JITDylibs...\n");
   // Create a "main" JITLinkDylib.
   IdxToJD[0] = S.MainJD;
-  S.JDSearchOrder.push_back({S.MainJD, JITDylibLookupFlags::MatchAllSymbols});
+  S.JDSearchOrder.push_back({S.MainJD, JITDylibLookupFlags::MatchExportedSymbolsOnly});
   LLVM_DEBUG(dbgs() << "  0: " << S.MainJD->getName() << "\n");
 
   typedef struct helper_func {
@@ -251,11 +250,10 @@ static Error addObjects(Session &S,
   return Error::success();
 }
 
-static Error addSessionInputs(Session &S, uint64_t StartCode, uint64_t End,
-                              void *HelperFuncs, size_t HelperFuncsCnt) {
+static Error addSessionInputs(Session &S, void *HelperFuncs, size_t HelperFuncsCnt) {
   std::map<unsigned, JITDylib *> IdxToJD;
 
-  if (auto Err = createJITDylibs(S, IdxToJD, StartCode, End, HelperFuncs, HelperFuncsCnt))
+  if (auto Err = createJITDylibs(S, IdxToJD, HelperFuncs, HelperFuncsCnt))
     return Err;
 
   if (auto Err = addObjects(S, IdxToJD))
@@ -304,7 +302,7 @@ uint64_t parseFuncHex(const std::string& input) {
 int invoke_jitlink_init_done = 0;
 
 extern "C" {
-void *invoke_jitlink(const char *AotFile, uint64_t StartCode, uint64_t End,
+void *invoke_jitlink(const char *AotFile, uint64_t StartCode,
                      void (*register_mapping)(uint64_t, uint64_t, uint64_t), void (*log_mapping)(const char *, uint64_t),
                      void *HelperFuncs, size_t HelperFuncsCnt, int enable_llvm_debug, const char *entry)
 {
@@ -324,7 +322,7 @@ void *invoke_jitlink(const char *AotFile, uint64_t StartCode, uint64_t End,
   ExitOnErr.setBanner(std::string(argv[0]) + ": ");
   auto [TT, Features] = getFirstFileTripleAndFeatures();
   auto S = ExitOnErr(Session::Create(TT, Features));
-  ExitOnErr(addSessionInputs(*S, StartCode, End, HelperFuncs, HelperFuncsCnt));
+  ExitOnErr(addSessionInputs(*S, HelperFuncs, HelperFuncsCnt));
 
   auto Plugin = std::make_unique<FunctionSymbolPlugin>();
   auto &PluginRef = *Plugin;
