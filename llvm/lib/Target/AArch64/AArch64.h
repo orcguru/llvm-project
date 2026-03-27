@@ -33,6 +33,7 @@ FunctionPass *createAArch64DeadRegisterDefinitions();
 FunctionPass *createAArch64RedundantCopyEliminationPass();
 FunctionPass *createAArch64CondBrTuning();
 FunctionPass *createAArch64CompressJumpTablesPass();
+FunctionPass *createAArch64AOTStackSwitchPass();
 FunctionPass *createAArch64ConditionalCompares();
 FunctionPass *createAArch64AdvSIMDScalar();
 FunctionPass *createAArch64ISelDag(AArch64TargetMachine &TM,
@@ -83,6 +84,7 @@ void initializeAArch64BranchTargetsPass(PassRegistry&);
 void initializeAArch64CFIFixupPass(PassRegistry&);
 void initializeAArch64CollectLOHPass(PassRegistry &);
 void initializeAArch64CompressJumpTablesPass(PassRegistry&);
+void initializeAArch64AOTStackSwitchPass(PassRegistry&);
 void initializeAArch64CondBrTuningPass(PassRegistry &);
 void initializeAArch64ConditionOptimizerPass(PassRegistry&);
 void initializeAArch64ConditionalComparesPass(PassRegistry &);
