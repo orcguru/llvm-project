@@ -1,4 +1,4 @@
-//===- AArch64AOTStackSwitchPass.cpp - AOT Stack Switching Pass -----------===//
+//===- RISCVAOTStackSwitchPass.cpp - AOT Stack Switching Pass -----------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -12,9 +12,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "AArch64.h"
-#include "AArch64MachineFunctionInfo.h"
-#include "AArch64Subtarget.h"
+#include "RISCV.h"
+#include "RISCVSubtarget.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
@@ -25,7 +24,7 @@
 
 using namespace llvm;
 
-#define DEBUG_TYPE "aarch64-aot-stack-switch"
+#define DEBUG_TYPE "riscv-aot-stack-switch"
 
 static bool EnableAOTStackSwitch() {
   static bool Enabled = []() {
@@ -36,16 +35,16 @@ static bool EnableAOTStackSwitch() {
 }
 
 //===----------------------------------------------------------------------===//
-// AArch64AOTStackSwitchPass class
+// RISCVAOTStackSwitchPass class
 //===----------------------------------------------------------------------===//
 
 namespace {
 
-class AArch64AOTStackSwitch : public MachineFunctionPass {
+class RISCVAOTStackSwitch : public MachineFunctionPass {
 public:
   static char ID; // Pass identification
 
-  AArch64AOTStackSwitch() : MachineFunctionPass(ID) {}
+  RISCVAOTStackSwitch() : MachineFunctionPass(ID) {}
 
   StringRef getPassName() const override {
     return "Machine AOT Stack Switch Pass";
@@ -53,21 +52,21 @@ public:
 
   bool runOnMachineFunction(MachineFunction &MF) override;
 };
-char AArch64AOTStackSwitch::ID = 0;
+char RISCVAOTStackSwitch::ID = 0;
 } // end anonymous namespace
 
 //===----------------------------------------------------------------------===//
 // Pass initialization
 //===----------------------------------------------------------------------===//
 
-INITIALIZE_PASS(AArch64AOTStackSwitch, DEBUG_TYPE,
-                      "AArch64 AOT Stack Switch Pass", false, false)
+INITIALIZE_PASS(RISCVAOTStackSwitch, DEBUG_TYPE,
+                      "RISCV AOT Stack Switch Pass", false, false)
 
 //===----------------------------------------------------------------------===//
 // Pass implementation
 //===----------------------------------------------------------------------===//
 
-bool AArch64AOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
+bool RISCVAOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
   if (!EnableAOTStackSwitch()) {
     return false;
   }
@@ -75,7 +74,7 @@ bool AArch64AOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
   const Function &F = MF.getFunction();
   
   // Initialize target information
-  const AArch64Subtarget &Subtarget = MF.getSubtarget<AArch64Subtarget>();
+  const RISCVSubtarget &Subtarget = MF.getSubtarget<RISCVSubtarget>();
   const TargetInstrInfo &TII = *Subtarget.getInstrInfo();
   
   // Check if this function needs stack switching instrumentation
@@ -104,11 +103,11 @@ bool AArch64AOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
               const Function *Callee = dyn_cast<Function>(MO.getGlobal());
               if (Callee && Callee->getCallingConv() != CallingConv::QEMUAOT) {
                 // Switch stack
-                BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(AArch64::SP).addReg(AArch64::X25).addImm(-64);
-                BuildMI(MBB, InsertPos, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::SP).addReg(AArch64::X25).addImm(-56);
+                BuildMI(MBB, InsertPos, DL, TII.get(RISCV::SD)).addReg(RISCV::X2).addReg(RISCV::X25).addImm(-64);
+                BuildMI(MBB, InsertPos, DL, TII.get(RISCV::LD)).addReg(RISCV::X2).addReg(RISCV::X25).addImm(-56);
                 // Backup ENV
-                BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(AArch64::X25).addReg(AArch64::SP).addImm(-8);
-                BuildMI(MBB, InsertPos, DL, TII.get(AArch64::SUBXri)).addReg(AArch64::SP).addReg(AArch64::SP).addImm(16).addImm(0);
+                BuildMI(MBB, InsertPos, DL, TII.get(RISCV::SD)).addReg(RISCV::X25).addReg(RISCV::X2).addImm(-8);
+                BuildMI(MBB, InsertPos, DL, TII.get(RISCV::ADDI)).addReg(RISCV::X2).addReg(RISCV::X2).addImm(-16);
                 Changed = true;
               }
             }
@@ -119,8 +118,8 @@ bool AArch64AOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
             if (MO.isGlobal()) {
               const Function *Callee = dyn_cast<Function>(MO.getGlobal());
               if (Callee && Callee->getCallingConv() != CallingConv::QEMUAOT) {
-                BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(AArch64::SP).addReg(AArch64::X25).addImm(-64);
-                BuildMI(MBB, InsertPos, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::SP).addReg(AArch64::X25).addImm(-56);
+                BuildMI(MBB, InsertPos, DL, TII.get(RISCV::SD)).addReg(RISCV::X2).addReg(RISCV::X25).addImm(-64);
+                BuildMI(MBB, InsertPos, DL, TII.get(RISCV::LD)).addReg(RISCV::X2).addReg(RISCV::X25).addImm(-56);
                 Changed = true;
               }
             }
@@ -131,11 +130,11 @@ bool AArch64AOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
           InsertPos = MI;
           DL = MI->getDebugLoc();
           // Restore ENV
-          BuildMI(MBB, InsertPos, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::SP).addReg(AArch64::SP).addImm(16).addImm(0);
-          BuildMI(MBB, InsertPos, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::X25).addReg(AArch64::SP).addImm(-8);
+          BuildMI(MBB, InsertPos, DL, TII.get(RISCV::ADDI)).addReg(RISCV::X2).addReg(RISCV::X2).addImm(16);
+          BuildMI(MBB, InsertPos, DL, TII.get(RISCV::LD)).addReg(RISCV::X25).addReg(RISCV::X2).addImm(-8);
           // Switch stack
-          BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(AArch64::SP).addReg(AArch64::X25).addImm(-56);
-          BuildMI(MBB, InsertPos, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::SP).addReg(AArch64::X25).addImm(-64);
+          BuildMI(MBB, InsertPos, DL, TII.get(RISCV::SD)).addReg(RISCV::X2).addReg(RISCV::X25).addImm(-56);
+          BuildMI(MBB, InsertPos, DL, TII.get(RISCV::LD)).addReg(RISCV::X2).addReg(RISCV::X25).addImm(-64);
           Changed = true;
         }
       }
@@ -151,8 +150,8 @@ bool AArch64AOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
 
 namespace llvm {
 
-FunctionPass *createAArch64AOTStackSwitchPass() {
-  return new AArch64AOTStackSwitch();
+FunctionPass *createRISCVAOTStackSwitchPass() {
+  return new RISCVAOTStackSwitch();
 }
 
 } // namespace llvm
