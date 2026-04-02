@@ -105,6 +105,7 @@ bool RISCVAOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
                 // Switch stack
                 BuildMI(MBB, InsertPos, DL, TII.get(RISCV::SD)).addReg(RISCV::X2).addReg(RISCV::X25).addImm(-64);
                 BuildMI(MBB, InsertPos, DL, TII.get(RISCV::LD)).addReg(RISCV::X2).addReg(RISCV::X25).addImm(-56);
+                BuildMI(MBB, InsertPos, DL, TII.get(RISCV::LD)).addReg(RISCV::X4).addReg(RISCV::X25).addImm(-80);
                 // Backup ENV
                 BuildMI(MBB, InsertPos, DL, TII.get(RISCV::SD)).addReg(RISCV::X25).addReg(RISCV::X2).addImm(-8);
                 BuildMI(MBB, InsertPos, DL, TII.get(RISCV::ADDI)).addReg(RISCV::X2).addReg(RISCV::X2).addImm(-16);
@@ -120,6 +121,7 @@ bool RISCVAOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
               if (Callee && Callee->getCallingConv() != CallingConv::QEMUAOT) {
                 BuildMI(MBB, InsertPos, DL, TII.get(RISCV::SD)).addReg(RISCV::X2).addReg(RISCV::X25).addImm(-64);
                 BuildMI(MBB, InsertPos, DL, TII.get(RISCV::LD)).addReg(RISCV::X2).addReg(RISCV::X25).addImm(-56);
+                BuildMI(MBB, InsertPos, DL, TII.get(RISCV::LD)).addReg(RISCV::X4).addReg(RISCV::X25).addImm(-80);
                 Changed = true;
               }
             }
