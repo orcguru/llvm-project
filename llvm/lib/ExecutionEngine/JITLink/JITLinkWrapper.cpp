@@ -10,6 +10,7 @@
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/Timer.h"
 
 #include <cstring>
 #include <deque>
@@ -97,6 +98,13 @@ void reportLLVMJITLinkError(Error Err) {
       ConditionalPrintErr<orc::FailedToMaterialize>(false),
       ConditionalPrintErr<ErrorInfoBase>(true));
 }
+
+struct JITLinkTimers {
+  TimerGroup JITLinkTG{"llvm-jitlink timers", "timers for llvm-jitlink phases"};
+  Timer LoadObjectsTimer{"load", "time to load/add object files", JITLinkTG};
+  Timer LinkTimer{"link", "time to link object files", JITLinkTG};
+  Timer RunTimer{"run", "time to execute jitlink'd code", JITLinkTG};
+};
 
 } // end anonymous namespace
 
@@ -318,17 +326,29 @@ void *invoke_jitlink(const char *AotFile, uint64_t StartCode,
     invoke_jitlink_init_done = 1;
   }
 
+  std::unique_ptr<JITLinkTimers> Timers = std::make_unique<JITLinkTimers>();
+
   cl::ParseCommandLineOptions(argc, argv, "llvm jitlink tool");
   ExitOnErr.setBanner(std::string(argv[0]) + ": ");
   auto [TT, Features] = getFirstFileTripleAndFeatures();
   auto S = ExitOnErr(Session::Create(TT, Features));
-  ExitOnErr(addSessionInputs(*S, HelperFuncs, HelperFuncsCnt));
+
+  {
+    TimeRegion TR(&Timers->LoadObjectsTimer);
+    ExitOnErr(addSessionInputs(*S, HelperFuncs, HelperFuncsCnt));
+  }
 
   auto Plugin = std::make_unique<FunctionSymbolPlugin>();
   auto &PluginRef = *Plugin;
   S->ObjLayer.addPlugin(std::move(Plugin));
 
-  Expected<ExecutorSymbolDef> EntryPoint = getEntryPoint(*S);
+  Expected<ExecutorSymbolDef> EntryPoint((ExecutorSymbolDef()));
+  {
+    ExpectedAsOutParameter<ExecutorSymbolDef> _(&EntryPoint);
+    TimeRegion TR(&Timers->LinkTimer);
+    EntryPoint = getEntryPoint(*S);
+  }
+
   if (!EntryPoint) {
     reportLLVMJITLinkError(EntryPoint.takeError());
     exit(1);
