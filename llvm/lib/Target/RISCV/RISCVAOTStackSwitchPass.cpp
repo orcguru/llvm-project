@@ -34,6 +34,14 @@ static bool EnableAOTStackSwitch() {
   return Enabled;
 }
 
+static bool ForceAOTStackSwitch() {
+  static bool Enabled = []() {
+    const char *Env = std::getenv("LLVM_FORCE_AOT_STACK_SWITCH");
+    return Env != nullptr && std::strcmp(Env, "1") == 0;
+  }();
+  return Enabled;
+}
+
 //===----------------------------------------------------------------------===//
 // RISCVAOTStackSwitchPass class
 //===----------------------------------------------------------------------===//
@@ -67,7 +75,7 @@ INITIALIZE_PASS(RISCVAOTStackSwitch, DEBUG_TYPE,
 //===----------------------------------------------------------------------===//
 
 bool RISCVAOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
-  if (!EnableAOTStackSwitch()) {
+  if (!(EnableAOTStackSwitch() || ForceAOTStackSwitch())) {
     return false;
   }
   // Get the LLVM function
@@ -98,6 +106,8 @@ bool RISCVAOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
       if (Instr.isCall()) {
         if (!TII.isTailCall(Instr)) {
           // Handle switch from AOT to runtime and return back (need to backup ENV)
+          int found_global = 0;
+          int did_switch = 0;
           for (const MachineOperand &MO : Instr.operands()) {
             if (MO.isGlobal()) {
               const Function *Callee = dyn_cast<Function>(MO.getGlobal());
@@ -110,8 +120,21 @@ bool RISCVAOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
                 BuildMI(MBB, InsertPos, DL, TII.get(RISCV::SD)).addReg(RISCV::X25).addReg(RISCV::X2).addImm(-8);
                 BuildMI(MBB, InsertPos, DL, TII.get(RISCV::ADDI)).addReg(RISCV::X2).addReg(RISCV::X2).addImm(-16);
                 Changed = true;
+                did_switch = 1;
               }
+              found_global = 1;
             }
+          }
+          // This is likely call via argument to runtime helper, need do switch
+          if (ForceAOTStackSwitch() && found_global == 0 && did_switch == 0) {
+              // Switch stack
+              BuildMI(MBB, InsertPos, DL, TII.get(RISCV::SD)).addReg(RISCV::X2).addReg(RISCV::X25).addImm(-64);
+              BuildMI(MBB, InsertPos, DL, TII.get(RISCV::LD)).addReg(RISCV::X2).addReg(RISCV::X25).addImm(-56);
+              BuildMI(MBB, InsertPos, DL, TII.get(RISCV::LD)).addReg(RISCV::X4).addReg(RISCV::X25).addImm(-80);
+              // Backup ENV
+              BuildMI(MBB, InsertPos, DL, TII.get(RISCV::SD)).addReg(RISCV::X25).addReg(RISCV::X2).addImm(-8);
+              BuildMI(MBB, InsertPos, DL, TII.get(RISCV::ADDI)).addReg(RISCV::X2).addReg(RISCV::X2).addImm(-16);
+              Changed = true;
           }
         } else {
           // Handle switch from AOT to runtime and without return back (do not backup ENV)
