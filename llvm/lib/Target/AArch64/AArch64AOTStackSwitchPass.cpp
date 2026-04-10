@@ -35,6 +35,15 @@ static bool EnableAOTStackSwitch() {
   return Enabled;
 }
 
+// For rampoline_do_not_sync_vector
+static bool ForceAOTStackSwitch() {
+  static bool Enabled = []() {
+    const char *Env = std::getenv("LLVM_FORCE_AOT_STACK_SWITCH");
+    return Env != nullptr && std::strcmp(Env, "1") == 0;
+  }();
+  return Enabled;
+}
+
 //===----------------------------------------------------------------------===//
 // AArch64AOTStackSwitchPass class
 //===----------------------------------------------------------------------===//
@@ -68,7 +77,7 @@ INITIALIZE_PASS(AArch64AOTStackSwitch, DEBUG_TYPE,
 //===----------------------------------------------------------------------===//
 
 bool AArch64AOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
-  if (!EnableAOTStackSwitch()) {
+  if (!(EnableAOTStackSwitch() || ForceAOTStackSwitch())) {
     return false;
   }
   // Get the LLVM function
@@ -99,6 +108,8 @@ bool AArch64AOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
       if (Instr.isCall()) {
         if (!TII.isTailCall(Instr)) {
           // Handle switch from AOT to runtime and return back (need to backup ENV)
+          int found_global = 0;
+          int did_switch = 0;
           for (const MachineOperand &MO : Instr.operands()) {
             if (MO.isGlobal()) {
               const Function *Callee = dyn_cast<Function>(MO.getGlobal());
@@ -110,8 +121,20 @@ bool AArch64AOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
                 BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(AArch64::X25).addReg(AArch64::SP).addImm(-8);
                 BuildMI(MBB, InsertPos, DL, TII.get(AArch64::SUBXri)).addReg(AArch64::SP).addReg(AArch64::SP).addImm(16).addImm(0);
                 Changed = true;
+                did_switch = 1;
               }
+              found_global = 1;
             }
+          }
+          // This is likely call via argument to runtime helper, need do switch
+          if (ForceAOTStackSwitch() && found_global == 0 && did_switch == 0) {
+              // Switch stack
+              BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(AArch64::SP).addReg(AArch64::X25).addImm(-64);
+              BuildMI(MBB, InsertPos, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::SP).addReg(AArch64::X25).addImm(-56);
+              // Backup ENV
+              BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(AArch64::X25).addReg(AArch64::SP).addImm(-8);
+              BuildMI(MBB, InsertPos, DL, TII.get(AArch64::SUBXri)).addReg(AArch64::SP).addReg(AArch64::SP).addImm(16).addImm(0);
+              Changed = true;
           }
         } else {
           // Handle switch from AOT to runtime and without return back (do not backup ENV)
