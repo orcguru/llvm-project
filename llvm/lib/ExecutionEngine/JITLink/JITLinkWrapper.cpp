@@ -1,4 +1,4 @@
-#include "llvm/ToolDrivers/llvm-jitlink.h"
+#include "../tools/llvm-jitlink/llvm-jitlink.h"
 #include "llvm/BinaryFormat/Magic.h"
 #include "llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h"
 #include "llvm/ExecutionEngine/Orc/MapperJITLinkMemoryManager.h"
