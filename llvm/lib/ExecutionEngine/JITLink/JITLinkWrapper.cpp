@@ -14,6 +14,7 @@
 
 #include <cstring>
 #include <deque>
+#include <sstream>
 #include <string>
 
 #define DEBUG_TYPE "llvm_jitlink"
@@ -40,14 +41,104 @@ static cl::list<std::string> InputArgv("args", cl::Positional,
 static ExitOnError ExitOnErr;
 static std::set<std::string> processedSymbols;
 
+typedef void (*QEMUAOTLOG)(const char *);
+QEMUAOTLOG qemu_aot_log = (QEMUAOTLOG)NULL;
+static std::stringstream ss;
+
+static void log_output(const std::string& message) {
+  if (qemu_aot_log) {
+    qemu_aot_log(message.c_str());
+  }
+}
+
+static void dumpSectionContents(Session &S, LinkGraph &G) {
+  std::lock_guard<std::mutex> Lock(S.M);
+
+  ss.clear();
+  ss << "Relocated section contents for " << G.getName() << ":\n";
+
+  constexpr orc::ExecutorAddrDiff DumpWidth = 16;
+  static_assert(isPowerOf2_64(DumpWidth), "DumpWidth must be a power of two");
+
+  // Put sections in address order.
+  std::vector<Section *> Sections;
+  for (auto &S : G.sections())
+    Sections.push_back(&S);
+
+  llvm::sort(Sections, [](const Section *LHS, const Section *RHS) {
+    if (LHS->symbols().empty() && RHS->symbols().empty())
+      return false;
+    if (LHS->symbols().empty())
+      return false;
+    if (RHS->symbols().empty())
+      return true;
+    SectionRange LHSRange(*LHS);
+    SectionRange RHSRange(*RHS);
+    return LHSRange.getStart() < RHSRange.getStart();
+  });
+
+  for (auto *S : Sections) {
+    ss << S->getName().str() << " content:";
+    if (S->symbols().empty()) {
+      ss << "\n  section empty\n";
+      continue;
+    }
+
+    // Sort symbols into order, then render.
+    std::vector<Symbol *> Syms(S->symbols().begin(), S->symbols().end());
+    llvm::sort(Syms, [](const Symbol *LHS, const Symbol *RHS) {
+      return LHS->getAddress() < RHS->getAddress();
+    });
+
+    orc::ExecutorAddr NextAddr(Syms.front()->getAddress().getValue() &
+                               ~(DumpWidth - 1));
+    for (auto *Sym : Syms) {
+      bool IsZeroFill = Sym->getBlock().isZeroFill();
+      auto SymStart = Sym->getAddress();
+      auto SymSize = Sym->getSize();
+      auto SymEnd = SymStart + SymSize;
+      const uint8_t *SymData = IsZeroFill ? nullptr
+                                          : reinterpret_cast<const uint8_t *>(
+                                                Sym->getSymbolContent().data());
+      if (!SymSize) {
+        continue;
+      }
+
+      // Pad any space before the symbol starts.
+      assert(NextAddr <= SymStart);
+      while (NextAddr != SymStart) {
+        if (NextAddr % DumpWidth == 0)
+          ss << formatv("\n{0:x16}:", NextAddr).str();
+        ss << " 0x00";
+        ++NextAddr;
+      }
+
+      // Render the symbol content.
+      assert(NextAddr <= SymEnd);
+      while (NextAddr != SymEnd) {
+        if (NextAddr % DumpWidth == 0)
+          ss << formatv("\n{0:x16}:", NextAddr).str();
+        if (IsZeroFill)
+          ss << " 00";
+        else
+          ss << formatv(" {0:x2}", SymData[NextAddr - SymStart]).str();
+        ++NextAddr;
+      }
+    }
+    ss << "\n";
+  }
+}
+
 class FunctionSymbolPlugin : public llvm::orc::ObjectLinkingLayer::Plugin {
 public:
+  FunctionSymbolPlugin(Session &S) : S(S) {}
   // Store function names and addresses
   std::vector<std::pair<std::string, uint64_t>> FunctionSymbols;
 
   void modifyPassConfig(llvm::orc::MaterializationResponsibility &MR,
                         llvm::jitlink::LinkGraph &G,
                         llvm::jitlink::PassConfiguration &Config) override {
+    S.modifyPassConfig(G, Config);
     for (auto *Sym : G.defined_symbols())
       if (Sym->hasName() && Sym->isCallable() && processedSymbols.find((*Sym->getName()).str()) == processedSymbols.end()) {
         if (Sym->hasName() && Sym->isCallable() && ((*Sym->getName()).contains("func_") || (*Sym->getName()).contains("trampoline") || (*Sym->getName()).starts_with("helper_")))
@@ -64,6 +155,8 @@ public:
     return llvm::Error::success();
   }
   void notifyTransferringResources(llvm::orc::JITDylib &JD, llvm::orc::ResourceKey DstKey, llvm::orc::ResourceKey SrcKey) override {}
+  private:
+    Session &S;
 };
 
 namespace {
@@ -166,6 +259,13 @@ Session::Session(std::unique_ptr<ExecutorProcessControl> EPC, Error &Err)
     Err = MainJDOrErr.takeError();
     return;
   }
+}
+
+void Session::modifyPassConfig(LinkGraph &G, PassConfiguration &PassConfig) {
+  PassConfig.PostFixupPasses.push_back([this](LinkGraph &G) -> Error {
+    dumpSectionContents(*this, G);
+    return Error::success();
+  });
 }
 
 } // end namespace llvm
@@ -312,12 +412,18 @@ int invoke_jitlink_init_done = 0;
 extern "C" {
 void *invoke_jitlink(const char *AotFile, uint64_t StartCode,
                      void (*register_mapping)(uint64_t, uint64_t, uint64_t), void (*log_mapping)(const char *, uint64_t),
+                     void (*log_message)(const char *),
                      void *HelperFuncs, size_t HelperFuncsCnt, int enable_llvm_debug, const char *entry)
 {
   int argc = enable_llvm_debug ? 4 : 3;
   const char *argv[4] = {"llvm-jitlink", entry, AotFile, enable_llvm_debug ? "--debug-only=jitlink,llvm_jitlink,orc" : ""};
   char **argv_convert = (char **)argv;
   static InitLLVM X(argc, argv_convert);
+  ss.clear();
+
+  if (!qemu_aot_log) {
+    qemu_aot_log = log_message;
+  }
 
   if (!invoke_jitlink_init_done) {
     InitializeAllTargetInfos();
@@ -338,7 +444,7 @@ void *invoke_jitlink(const char *AotFile, uint64_t StartCode,
     ExitOnErr(addSessionInputs(*S, HelperFuncs, HelperFuncsCnt));
   }
 
-  auto Plugin = std::make_unique<FunctionSymbolPlugin>();
+  auto Plugin = std::make_unique<FunctionSymbolPlugin>(*S);
   auto &PluginRef = *Plugin;
   S->ObjLayer.addPlugin(std::move(Plugin));
 
@@ -349,6 +455,8 @@ void *invoke_jitlink(const char *AotFile, uint64_t StartCode,
     EntryPoint = getEntryPoint(*S);
   }
 
+  log_output(ss.str());
+  ss.clear();
   if (!EntryPoint) {
     reportLLVMJITLinkError(EntryPoint.takeError());
     exit(1);
