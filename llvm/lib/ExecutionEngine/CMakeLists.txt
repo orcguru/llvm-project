@@ -38,6 +38,7 @@ add_subdirectory(JITLink)
 add_subdirectory(MCJIT)
 add_subdirectory(Orc)
 add_subdirectory(RuntimeDyld)
+add_subdirectory(LightJIT)
 
 if( LLVM_USE_OPROFILE )
   add_subdirectory(OProfileJIT)

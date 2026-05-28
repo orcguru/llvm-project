@@ -1,0 +1,78 @@
+// light_jitlink.h
+#ifndef LIGHT_JITLINK_H
+#define LIGHT_JITLINK_H
+
+#include <cstdint>
+#include <cstddef>
+#include <unordered_map>
+#include <string>
+#include <vector>
+#include <cstdio>
+
+// 简化的链接上下文
+struct JITContext {
+    // 符号表
+    std::unordered_map<std::string, uint64_t> SymbolTable;
+    
+    // 当前分配的内存
+    struct Allocation {
+        char* Memory = nullptr;
+        size_t Size = 0;
+        uint64_t BaseAddress = 0;
+    } CurrentAlloc;
+    
+    // 加载的模块信息
+    struct LoadedModule {
+        uint64_t BaseAddress = 0;
+        size_t CodeSize = 0;
+    };
+    std::vector<LoadedModule> Modules;
+};
+
+// 自定义的极简 ELF 解析器
+class MinimalELF64Parser {
+private:
+    const char* Data;
+    size_t Size;
+    struct Elf64_Ehdr* Header;
+    
+public:
+    MinimalELF64Parser(const char* data, size_t size);
+    ~MinimalELF64Parser();
+    
+    bool isValid() const;
+    struct Elf64_Shdr* getSectionHeader(size_t index) const;
+    const char* getStringTable() const;
+    const char* getSectionName(size_t index) const;
+    uint64_t getEntryPoint() const;
+    const char* getData() const;
+    size_t getSize() const;
+};
+
+// 极简链接器
+class MinimalJITLinker {
+private:
+    JITContext& Ctx;
+    
+public:
+    MinimalJITLinker(JITContext& ctx);
+    ~MinimalJITLinker();
+    
+    // 主链接函数
+    bool link(const char* objectData, size_t objectSize, uint64_t baseAddress);
+    
+private:
+    size_t calculateTotalSize(const MinimalELF64Parser& parser);
+    bool allocateMemory(size_t size, uint64_t preferredAddr);
+    void buildSymbolTable(const MinimalELF64Parser& parser);
+    bool copySectionsAndRelocate(const MinimalELF64Parser& parser);
+    bool processRelocations(const MinimalELF64Parser& parser,
+                           struct Elf64_Shdr* relocShdr,
+                           char* memory,
+                           uint64_t baseAddr);
+    bool applyRelocation(uint32_t type, char* location, 
+                        uint64_t targetAddr, int64_t addend,
+                        uint64_t relocAddr);
+};
+
+#endif // LIGHT_JITLINK_H
