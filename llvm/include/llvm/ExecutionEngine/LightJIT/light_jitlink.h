@@ -73,6 +73,9 @@ private:
     bool applyRelocation(uint32_t type, char* location, 
                         uint64_t targetAddr, int64_t addend,
                         uint64_t relocAddr);
+
+    void printMemoryLayout(const MinimalELF64Parser& parser);
+    void printSectionsInfo(const MinimalELF64Parser& parser);
 };
 
 #endif // LIGHT_JITLINK_H

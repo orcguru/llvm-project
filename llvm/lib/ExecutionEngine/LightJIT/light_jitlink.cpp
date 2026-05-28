@@ -12,6 +12,7 @@
 #include <cstring>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <iostream>
 
 using namespace llvm;
 
@@ -146,12 +147,32 @@ MinimalJITLinker::MinimalJITLinker(JITContext& ctx) : Ctx(ctx) {}
 
 MinimalJITLinker::~MinimalJITLinker() {}
 
+void MinimalJITLinker::printSectionsInfo(const MinimalELF64Parser& parser) {
+    std::cout << "\n=== ELF Sections Info ===" << std::endl;
+    for (size_t i = 0; ; i++) {
+        auto shdr = parser.getSectionHeader(i);
+        if (!shdr) break;
+
+        std::cout << "Section " << i << ":" << std::endl;
+        std::cout << "  Type: " << shdr->sh_type
+                  << " (1=PROGBITS, 3=SYMTAB, 9=RELA)" << std::endl;
+        std::cout << "  Flags: 0x" << std::hex << shdr->sh_flags << std::dec << std::endl;
+        std::cout << "  Address: 0x" << std::hex << shdr->sh_addr << std::dec << std::endl;
+        std::cout << "  Offset: 0x" << std::hex << shdr->sh_offset << std::dec << std::endl;
+        std::cout << "  Size: " << shdr->sh_size << " bytes" << std::endl;
+        std::cout << "  Addralign: " << shdr->sh_addralign << std::endl;
+        std::cout << std::endl;
+    }
+}
+
 bool MinimalJITLinker::link(const char* objectData, size_t objectSize, uint64_t baseAddress) {
     MinimalELF64Parser parser(objectData, objectSize);
     if (!parser.isValid()) {
         fprintf(stderr, "Invalid ELF file\n");
         return false;
     }
+
+    printSectionsInfo(parser);
 
     // 1. 计算总大小
     size_t totalSize = calculateTotalSize(parser);
@@ -160,11 +181,16 @@ bool MinimalJITLinker::link(const char* objectData, size_t objectSize, uint64_t 
         return false;
     }
 
+    std::cout << "DEBUG: Required memory size = " << totalSize << " bytes" << std::endl;
+    std::cout << "DEBUG: Preferred address = 0x" << std::hex << baseAddress << std::dec << std::endl;
+
     // 2. 分配内存
     if (!allocateMemory(totalSize, baseAddress)) {
         fprintf(stderr, "Failed to allocate memory\n");
         return false;
     }
+
+    printMemoryLayout(parser);
 
     // 3. 构建符号表
     buildSymbolTable(parser);
@@ -179,18 +205,31 @@ bool MinimalJITLinker::link(const char* objectData, size_t objectSize, uint64_t 
 }
 
 size_t MinimalJITLinker::calculateTotalSize(const MinimalELF64Parser& parser) {
-    size_t total = 0;
-    for (size_t i = 0; i < 16; i++) { // 只检查前16个段
+    uint64_t minAddr = UINT64_MAX;
+    uint64_t maxAddr = 0;
+    
+    // 遍历所有节头，直到遇到 nullptr
+    for (size_t i = 0; ; i++) {
         auto shdr = parser.getSectionHeader(i);
         if (!shdr) break;
-
-        if (shdr->sh_type == 1) { // SHT_PROGBITS
-            if (shdr->sh_flags & 4) { // SHF_EXECINSTR
-                total += (shdr->sh_size + 4095) & ~4095; // 向上对齐到页大小
+        
+        // 只考虑需要加载的段（如 PROGBITS）
+        if (shdr->sh_type == 1) {  // SHT_PROGBITS
+            if (shdr->sh_size > 0) {
+                uint64_t start = shdr->sh_addr;
+                uint64_t end = shdr->sh_addr + shdr->sh_size;
+                
+                if (start < minAddr) minAddr = start;
+                if (end > maxAddr) maxAddr = end;
             }
         }
     }
-    return total > 0 ? total : 4096; // 至少1页
+    
+    if (minAddr == UINT64_MAX) {
+        return 0;  // 没有需要加载的段
+    }
+    
+    return maxAddr - minAddr;
 }
 
 bool MinimalJITLinker::allocateMemory(size_t size, uint64_t preferredAddr) {
@@ -210,6 +249,7 @@ bool MinimalJITLinker::allocateMemory(size_t size, uint64_t preferredAddr) {
     Ctx.CurrentAlloc.Memory = static_cast<char*>(mem);
     Ctx.CurrentAlloc.Size = size;
     Ctx.CurrentAlloc.BaseAddress = reinterpret_cast<uint64_t>(mem);
+    std::cout << "Ctx.CurrentAlloc.Size:" << Ctx.CurrentAlloc.Size << std::endl;
     return true;
 }
 
@@ -249,46 +289,96 @@ void MinimalJITLinker::buildSymbolTable(const MinimalELF64Parser& parser) {
 bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser) {
     char* memory = Ctx.CurrentAlloc.Memory;
     uint64_t baseAddr = Ctx.CurrentAlloc.BaseAddress;
-
-    // 首先复制所有 PROGBITS 段
-    for (size_t i = 0; i < 16; i++) {
+    
+    // 计算最低的段地址
+    uint64_t lowestAddr = UINT64_MAX;
+    for (size_t i = 0; ; i++) {
         auto shdr = parser.getSectionHeader(i);
         if (!shdr) break;
-
-        if (shdr->sh_type == 1) { // SHT_PROGBITS
-            if (shdr->sh_size > 0) {
-                const char* src = parser.getData() + shdr->sh_offset;
-                char* dst = memory + shdr->sh_addr;
-
-                if (shdr->sh_offset + shdr->sh_size > parser.getSize()) {
-                    fprintf(stderr, "Section out of bounds\n");
-                    return false;
-                }
-
-                memcpy(dst, src, shdr->sh_size);
-
-                // 记录可执行段
-                if (shdr->sh_flags & 4) { // SHF_EXECINSTR
-                    Ctx.Modules.push_back({baseAddr + shdr->sh_addr,
-                                          shdr->sh_size});
-                }
+        
+        if (shdr->sh_type == 1 && shdr->sh_size > 0) {  // SHT_PROGBITS
+            if (shdr->sh_addr < lowestAddr) {
+                lowestAddr = shdr->sh_addr;
             }
         }
     }
-
-    // 然后处理重定位
-    for (size_t i = 0; i < 16; i++) {
+    
+    if (lowestAddr == UINT64_MAX) {
+        fprintf(stderr, "No sections to load\n");
+        return false;
+    }
+    
+    // 首先复制所有 PROGBITS 段
+    for (size_t i = 0; ; i++) {
         auto shdr = parser.getSectionHeader(i);
         if (!shdr) break;
-
-        if (shdr->sh_type == SHT_RELA) {
-            if (!processRelocations(parser, shdr, memory, baseAddr)) {
+        
+        if (shdr->sh_type == 1 && shdr->sh_size > 0) { // SHT_PROGBITS
+            const char* src = parser.getData() + shdr->sh_offset;
+            
+            // 计算内存中的正确偏移
+            uint64_t offset = shdr->sh_addr - lowestAddr;
+            
+            if (offset + shdr->sh_size > Ctx.CurrentAlloc.Size) {
+                fprintf(stderr, "Section exceeds allocated memory: offset=%lu, size=%lu, alloc=%lu\n",
+                       offset, shdr->sh_size, Ctx.CurrentAlloc.Size);
                 return false;
             }
+            
+            if (shdr->sh_offset + shdr->sh_size > parser.getSize()) {
+                fprintf(stderr, "Section out of bounds in ELF file\n");
+                return false;
+            }
+            
+            char* dst = memory + offset;
+            
+            std::cout << "DEBUG: shdr->sh_addr=0x" << std::hex << shdr->sh_addr 
+                     << ", lowestAddr=0x" << lowestAddr 
+                     << ", offset=0x" << offset 
+                     << ", size=" << std::dec << shdr->sh_size << std::endl;
+            
+            memcpy(dst, src, shdr->sh_size);
+            
+            // 记录可执行段
+            if (shdr->sh_flags & 4) { // SHF_EXECINSTR
+                Ctx.Modules.push_back({baseAddr + offset, shdr->sh_size});
+            }
+        }
+    }
+    return true;
+}
+
+void MinimalJITLinker::printMemoryLayout(const MinimalELF64Parser& parser) {
+    std::cout << "=== Memory Layout Analysis ===" << std::endl;
+    std::cout << "Allocated size: " << Ctx.CurrentAlloc.Size << " bytes" << std::endl;
+
+    uint64_t minAddr = UINT64_MAX;
+    uint64_t maxAddr = 0;
+
+    for (size_t i = 0; ; i++) {
+        auto shdr = parser.getSectionHeader(i);
+        if (!shdr) break;
+
+        if (shdr->sh_type == 1 && shdr->sh_size > 0) { // SHT_PROGBITS
+            uint64_t start = shdr->sh_addr;
+            uint64_t end = start + shdr->sh_size;
+
+            std::cout << "Section " << i
+                     << ": addr=0x" << std::hex << start
+                     << ", size=0x" << shdr->sh_size
+                     << ", end=0x" << end << std::dec << std::endl;
+
+            if (start < minAddr) minAddr = start;
+            if (end > maxAddr) maxAddr = end;
         }
     }
 
-    return true;
+    if (minAddr != UINT64_MAX) {
+        uint64_t required = maxAddr - minAddr;
+        std::cout << "Memory range: 0x" << std::hex << minAddr
+                 << " - 0x" << maxAddr
+                 << " (size: 0x" << required << " = " << std::dec << required << " bytes)" << std::endl;
+    }
 }
 
 bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
