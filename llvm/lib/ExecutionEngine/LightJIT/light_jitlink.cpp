@@ -516,7 +516,7 @@ bool MinimalJITLinker::applyRelocation(uint32_t type, char* location,
         instr = *reinterpret_cast<uint32_t*>(location);
         page_offset = ((value & ~0xFFFULL) - (relocAddr & ~0xFFFULL));
         if (page_offset < -((1LL) << 20) || page_offset >= ((1LL) << 20)) {
-            fprintf(stderr, "Relocation R_AARCH64_ADR_PREL_PG_HI21/R_AARCH64_ADR_GOT_PAGE out of range: 0x%lx relocOffset:0x%lx\n", page_offset, relocOffset);
+            fprintf(stderr, "Relocation R_AARCH64_ADR_PREL_PG_HI21/R_AARCH64_ADR_GOT_PAGE out of range: 0x%lx relocOffset:0x%lx value:0x%lx relocAddr:0x%lx\n", page_offset, relocOffset, value, relocAddr);
             return false;
         }
         imm = (page_offset >> 12) & 0x1FFFFF;
