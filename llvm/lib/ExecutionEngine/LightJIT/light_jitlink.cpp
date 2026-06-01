@@ -451,26 +451,88 @@ bool MinimalJITLinker::applyRelocation(uint32_t type, char* location,
                     uint64_t targetAddr, int64_t addend,
                     uint64_t relocAddr) {
     uint64_t value = targetAddr + addend;
+    uint64_t instr;
+    uint64_t result;
+    int64_t page_offset;
+    int64_t branch_offset;
+    uint32_t imm;
+    uint32_t imm26;
 
     switch (type) {
-    case 1: // R_X86_64_64
-        *reinterpret_cast<uint64_t*>(location) = value;
+    // --- New AArch64 relocations ---
+    // Constants are from the AArch64 ELF ABI specification.
+    case 277: // R_AARCH64_ADD_ABS_LO12_NC (0x115)
+        // value is the target address. Extract bits [11:0] and insert into the instruction.
+        // The instruction at 'location' has an immediate field in bits [21:10].
+        instr = *reinterpret_cast<uint32_t*>(location);
+        // The immediate is stored as `imm12` in the ADD/SUB (immediate) instruction.
+        // It is encoded as `imm12` for the 12-bit unsigned immediate.
+        // For this relocation, we take the low 12 bits of the value.
+        result = (instr & ~(0xFFF << 10)) | ((value & 0xFFF) << 10);
+        *reinterpret_cast<uint32_t*>(location) = result;
         break;
-    case 2: // R_X86_64_PC32
-        {
-            int64_t pcRelative = value - (relocAddr + 4);
-            *reinterpret_cast<int32_t*>(location) = pcRelative;
+
+    case 311: // R_AARCH64_ADR_GOT_PAGE (0x137)
+    case 275: // R_AARCH64_ADR_PREL_PG_HI21 (0x113)
+        // These relocations compute a page-aligned address difference (PAGE(addr) - PAGE(reloc)).
+        // They are used to form a PC-relative address to the Global Offset Table (GOT) or a symbol.
+        // The instruction is an ADRP, which encodes a 21-bit signed page offset.
+        instr = *reinterpret_cast<uint32_t*>(location);
+        // Compute the page offset: ((value & ~0xFFF) - (relocAddr & ~0xFFF))
+        page_offset = ((value & ~0xFFFULL) - (relocAddr & ~0xFFFULL));
+        // The immediate in ADRP is split into immlo (bits 30:29) and immhi (bits 23:5) of the instruction.
+        // The combined 21-bit signed immediate is `imm = SignExtend(immhi:immlo:Zeros(12), 64)`.
+        // We encode it back.
+        if (page_offset < -((1LL) << 20) || page_offset >= ((1LL) << 20)) {
+            fprintf(stderr, "Relocation R_AARCH64_ADR_PREL_PG_HI21/R_AARCH64_ADR_GOT_PAGE out of range: 0x%lx\n", page_offset);
+            return false;
         }
+        // Encode the 21-bit signed immediate (page_offset >> 12) into the instruction.
+        imm = (page_offset >> 12) & 0x1FFFFF; // 21 bits
+        // Clear the immediate fields in the instruction
+        instr &= ~(0x1FFFFF << 5); // immhi at bits [23:5]
+        instr &= ~(0x3 << 29);     // immlo at bits [30:29]
+        // Set the immhi field
+        instr |= ((imm >> 2) & 0x7FFFF) << 5; // immhi is bits [20:2] of the 21-bit imm
+        // Set the immlo field
+        instr |= (imm & 0x3) << 29;
+        *reinterpret_cast<uint32_t*>(location) = instr;
         break;
-    case 10: // R_X86_64_32
-        *reinterpret_cast<uint32_t*>(location) = value;
+
+    case 283: // R_AARCH64_CALL26 (0x11B)
+    case 282: // R_AARCH64_JUMP26 (0x11A)
+        // 26-bit PC-relative branch. Used for B and BL instructions.
+        instr = *reinterpret_cast<uint32_t*>(location);
+        branch_offset = value - relocAddr;
+        if (branch_offset < -(1 << 27) || branch_offset >= (1 << 27)) {
+            fprintf(stderr, "Relocation R_AARCH64_CALL26/R_AARCH64_JUMP26 out of range: 0x%lx\n", branch_offset);
+            return false;
+        }
+        // The immediate is a 26-bit signed offset, shifted left by 2.
+        imm26 = (branch_offset >> 2) & 0x3FFFFFF;
+        // Clear the immediate field (bits [25:0]) and set the new value.
+        instr = (instr & 0xFC000000) | imm26;
+        *reinterpret_cast<uint32_t*>(location) = instr;
         break;
-    case 11: // R_X86_64_32S
-        *reinterpret_cast<int32_t*>(location) = value;
+
+    case 312: // R_AARCH64_LD64_GOT_LO12_NC (0x117)
+        // This is similar to ADD_ABS_LO12_NC, but used specifically for loading a GOT entry
+        // with a 64-bit load (LD/ST with register offset). The immediate is 12-bit scaled by 8.
+        instr = *reinterpret_cast<uint32_t*>(location);
+        // The offset is the low 12 bits of the GOT entry address, scaled by 8 for 64-bit.
+        // The instruction's immediate field is in bits [21:10] and is a 12-bit unsigned immediate (imm12).
+        // The value to store is (value & 0xFF8) because the offset must be a multiple of 8 for 64-bit load.
+        result = (instr & ~(0xFFF << 10)) | ((value & 0xFF8) << (10 - 3)); // Shift right by 3 for scaling? Wait, careful.
+        // Actually, the instruction encoding: For LD/ST with unsigned immediate, the immediate is `imm12 << 3` for 64-bit.
+        // Therefore, to get the immediate field `imm12` from the address, we do: `imm12 = (value & 0xFF8) >> 3`.
+        // So the bits to insert into the instruction's imm12 field are (value & 0xFF8) >> 3.
+        result = (instr & ~(0xFFF << 10)) | (((value & 0xFF8) >> 3) << 10);
+        *reinterpret_cast<uint32_t*>(location) = result;
         break;
+
     // 添加更多重定位类型...
     default:
-        fprintf(stderr, "Unsupported relocation type: %u\n", type);
+        fprintf(stderr, "Unsupported relocation type: %u (0x%x)\n", type, type);
         return false;
     }
     return true;
