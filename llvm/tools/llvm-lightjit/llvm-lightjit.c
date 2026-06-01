@@ -78,30 +78,6 @@ int main(int argc, char** argv) {
                    regions[i].size);
         }
         
-        // 查找符号
-        const char* test_symbols[] = {"main", "_start", "foo", "bar", NULL};
-        for (int i = 0; test_symbols[i]; i++) {
-            uint64_t addr = jit_find_symbol(ctx, test_symbols[i]);
-            if (addr) {
-                printf("Found symbol '%s' at 0x%lx\n", test_symbols[i], addr);
-            }
-        }
-        
-        // 测试查找helper函数
-        if (helper_file) {
-            // 尝试查找一些已知的helper函数
-            const char* helper_names[] = {"helper_fma4ps_ymm", "helper_fma4pd_ymm", 
-                                         "helper_vpermilpd_ymm", "helper_vpermilps_ymm", NULL};
-            for (int i = 0; helper_names[i]; i++) {
-                uint64_t addr = jit_find_symbol(ctx, helper_names[i]);
-                if (addr) {
-                    printf("Found helper '%s' at 0x%lx\n", helper_names[i], addr);
-                } else {
-                    printf("Helper '%s' not found (was it in the helper file?)\n", helper_names[i]);
-                }
-            }
-        }
-        
         // 执行代码（可选）
         // uint64_t result = jit_execute(ctx, entry, 0, 0);
         // printf("Execution result: 0x%lx\n", result);
