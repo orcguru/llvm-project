@@ -366,15 +366,15 @@ bool MinimalJITLinker::setupPLTAndGOT() {
     // 计算 PLT 和 GOT 所需大小
     // 初始分配 16 个 PLT 条目，每个条目 2 条指令（8 字节）
     // 实际上 AArch64 PLT 条目通常是 16 字节，但为了简化我们先使用 8 字节
-    size_t pltEntryCount = 16;
-    size_t gotEntryCount = 16;
+    size_t pltEntryCount = 2048;
+    size_t gotEntryCount = 2048;
 
     size_t pltSize = pltEntryCount * 8;  // 每个 PLT 条目 8 字节
     size_t gotSize = gotEntryCount * 8;  // 每个 GOT 条目 8 字节
 
     std::cout << "DEBUG: Setting up PLT and GOT" << std::endl;
-    std::cout << "  PLT entries: " << pltEntryCount << ", size: " << pltSize << " bytes" << std::endl;
-    std::cout << "  GOT entries: " << gotEntryCount << ", size: " << gotSize << " bytes" << std::endl;
+    std::cout << "  PLT entries: " << std::dec << pltEntryCount << ", size: " << pltSize << " bytes" << std::endl;
+    std::cout << "  GOT entries: " << std::dec << gotEntryCount << ", size: " << gotSize << " bytes" << std::endl;
 
     // 在现有内存之后分配 PLT 和 GOT
     // 注意：我们需要确保 PLT 在代码附近（在 ±128MB 范围内）
