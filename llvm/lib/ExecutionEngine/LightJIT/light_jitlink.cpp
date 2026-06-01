@@ -249,7 +249,7 @@ bool MinimalJITLinker::allocateMemory(size_t size, uint64_t preferredAddr) {
     Ctx.CurrentAlloc.Memory = static_cast<char*>(mem);
     Ctx.CurrentAlloc.Size = size;
     Ctx.CurrentAlloc.BaseAddress = reinterpret_cast<uint64_t>(mem);
-    std::cout << "Ctx.CurrentAlloc.Size:" << Ctx.CurrentAlloc.Size << std::endl;
+    std::cout << "Ctx.CurrentAlloc.BaseAddress:" << std::hex << Ctx.CurrentAlloc.BaseAddress << " Ctx.CurrentAlloc.Size:" << Ctx.CurrentAlloc.Size << std::endl;
     return true;
 }
 
@@ -453,7 +453,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
         char* locPtr = memory + rela->r_offset;
 
         if (!applyRelocation(type, locPtr, targetAddr,
-                           rela->r_addend, location)) {
+                           rela->r_addend, location, rela->r_offset)) {
             fprintf(stderr, "Failed to apply relocation type %u\n", type);
             return false;
         }
@@ -464,7 +464,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
 
 bool MinimalJITLinker::applyRelocation(uint32_t type, char* location,
                     uint64_t targetAddr, int64_t addend,
-                    uint64_t relocAddr) {
+                    uint64_t relocAddr, uint64_t relocOffset) {
     uint64_t value = targetAddr + addend;
     uint64_t instr;
     uint64_t result;
@@ -499,7 +499,7 @@ bool MinimalJITLinker::applyRelocation(uint32_t type, char* location,
         // The combined 21-bit signed immediate is `imm = SignExtend(immhi:immlo:Zeros(12), 64)`.
         // We encode it back.
         if (page_offset < -((1LL) << 20) || page_offset >= ((1LL) << 20)) {
-            fprintf(stderr, "Relocation R_AARCH64_ADR_PREL_PG_HI21/R_AARCH64_ADR_GOT_PAGE out of range: 0x%lx\n", page_offset);
+            fprintf(stderr, "Relocation R_AARCH64_ADR_PREL_PG_HI21/R_AARCH64_ADR_GOT_PAGE out of range: 0x%lx relocOffset:0x%lx\n", page_offset, relocOffset);
             return false;
         }
         // Encode the 21-bit signed immediate (page_offset >> 12) into the instruction.
@@ -520,7 +520,7 @@ bool MinimalJITLinker::applyRelocation(uint32_t type, char* location,
         instr = *reinterpret_cast<uint32_t*>(location);
         branch_offset = value - relocAddr;
         if (branch_offset < -(1 << 27) || branch_offset >= (1 << 27)) {
-            fprintf(stderr, "Relocation R_AARCH64_CALL26/R_AARCH64_JUMP26 out of range: 0x%lx\n", branch_offset);
+            fprintf(stderr, "Relocation R_AARCH64_CALL26/R_AARCH64_JUMP26 out of range: 0x%lx relocOffset:0x%lx value:0x%lx relocAddr:0x%lx\n", branch_offset, relocOffset, value, relocAddr);
             return false;
         }
         // The immediate is a 26-bit signed offset, shifted left by 2.

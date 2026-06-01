@@ -72,7 +72,7 @@ private:
                            uint64_t baseAddr);
     bool applyRelocation(uint32_t type, char* location, 
                         uint64_t targetAddr, int64_t addend,
-                        uint64_t relocAddr);
+                        uint64_t relocAddr, uint64_t relocOffset);
 
     void printMemoryLayout(const MinimalELF64Parser& parser);
     void printSectionsInfo(const MinimalELF64Parser& parser);
