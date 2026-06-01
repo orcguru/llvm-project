@@ -4,6 +4,7 @@
 #include <cstring>
 #include <cstdio>
 #include <sys/mman.h>
+#include <iostream>
 
 extern "C" {
 
@@ -40,6 +41,69 @@ uint64_t jit_link_aot(jit_context_t* ctx,
 
     // 创建链接器
     MinimalJITLinker linker(ctx->impl);
+
+    // 执行链接
+    if (!linker.link(static_cast<const char*>(aot_data),
+                     aot_size, base_address)) {
+        return 0;
+    }
+
+    // 设置输出区域
+    if (allocated_regions && region_count) {
+        *allocated_regions = (jit_memory_region*)malloc(
+            sizeof(jit_memory_region));
+        if (!*allocated_regions) {
+            return 0;
+        }
+
+        jit_memory_region* region = *allocated_regions;
+        region->start = ctx->impl.CurrentAlloc.Memory;
+        region->size = ctx->impl.CurrentAlloc.Size;
+        region->permissions = 7; // RWX
+        *region_count = 1;
+    }
+
+    // 返回入口地址
+    MinimalELF64Parser parser(static_cast<const char*>(aot_data), aot_size);
+    uint64_t entry = parser.getEntryPoint();
+    return ctx->impl.CurrentAlloc.BaseAddress + entry;
+}
+
+// Add to qemu_lightjit.cpp, in the extern "C" block
+uint64_t jit_link_aot_with_helpers(jit_context_t* ctx,
+                                  const void* aot_data,
+                                  size_t aot_size,
+                                  uint64_t base_address,
+                                  const char* helper_file,
+                                  jit_memory_region** allocated_regions,
+                                  size_t* region_count) {
+    if (!ctx || !aot_data || aot_size == 0) {
+        return 0;
+    }
+
+    // 创建链接器
+    MinimalJITLinker linker(ctx->impl);
+
+    // 如果提供了helper文件，解析并添加到符号表
+    if (helper_file) {
+        FILE* f = fopen(helper_file, "r");
+        if (f) {
+            char line[256];
+            while (fgets(line, sizeof(line), f)) {
+                char name[128];
+                uint64_t address;
+                // 解析格式: "function_name address"
+                if (sscanf(line, "%127s %lx", name, &address) == 2) {
+                    ctx->impl.SymbolTable[name] = address;
+                    std::cout << "Added helper: " << name << " = 0x"
+                              << std::hex << address << std::dec << std::endl;
+                }
+            }
+            fclose(f);
+        } else {
+            fprintf(stderr, "Warning: Could not open helper file: %s\n", helper_file);
+        }
+    }
 
     // 执行链接
     if (!linker.link(static_cast<const char*>(aot_data),

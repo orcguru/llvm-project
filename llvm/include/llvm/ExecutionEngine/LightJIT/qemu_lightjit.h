@@ -50,6 +50,15 @@ uint64_t jit_link_aot(jit_context_t* ctx,
                      jit_memory_region** allocated_regions,
                      size_t* region_count);
 
+// In qemu_lightjit.h (add this declaration)
+uint64_t jit_link_aot_with_helpers(jit_context_t* ctx,
+                                   const void* aot_data,
+                                   size_t aot_size,
+                                   uint64_t base_address,
+                                   const char* helper_file,
+                                   jit_memory_region** allocated_regions,
+                                   size_t* region_count);
+
 // 查找符号地址
 uint64_t jit_find_symbol(jit_context_t* ctx, const char* name);
 

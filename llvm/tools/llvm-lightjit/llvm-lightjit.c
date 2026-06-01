@@ -1,4 +1,4 @@
-// test_lightjit.c
+// Updated llvm-lightjit.c
 #include "llvm/ExecutionEngine/LightJIT/qemu_lightjit.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -6,15 +6,22 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <string.h>
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        printf("Usage: %s <object_file.o>\n", argv[0]);
+        printf("Usage: %s <object_file.o> [helper_file.txt]\n", argv[0]);
+        printf("Helper file format:\n");
+        printf("helper_fma4ps_ymm 0000aaab02e1bbfc\n");
+        printf("helper_fma4pd_ymm 0000aaab02e1bd4c\n");
         return 1;
     }
     
+    const char* object_file = argv[1];
+    const char* helper_file = (argc >= 3) ? argv[2] : NULL;
+    
     // 打开目标文件
-    int fd = open(argv[1], O_RDONLY);
+    int fd = open(object_file, O_RDONLY);
     if (fd < 0) {
         perror("open");
         return 1;
@@ -44,12 +51,18 @@ int main(int argc, char** argv) {
         return 1;
     }
     
-    // 链接
+    // 链接 - 使用带有helper文件的新函数
     jit_memory_region* regions = NULL;
     size_t region_count = 0;
     
-    uint64_t entry = jit_link_aot(ctx, file_data, st.st_size, 0,
-                                 &regions, &region_count);
+    uint64_t entry = 0;
+    if (helper_file) {
+        entry = jit_link_aot_with_helpers(ctx, file_data, st.st_size, 0,
+                                         helper_file, &regions, &region_count);
+    } else {
+        entry = jit_link_aot(ctx, file_data, st.st_size, 0,
+                            &regions, &region_count);
+    }
     
     if (entry == 0) {
         printf("Failed to link object file\n");
@@ -71,6 +84,21 @@ int main(int argc, char** argv) {
             uint64_t addr = jit_find_symbol(ctx, test_symbols[i]);
             if (addr) {
                 printf("Found symbol '%s' at 0x%lx\n", test_symbols[i], addr);
+            }
+        }
+        
+        // 测试查找helper函数
+        if (helper_file) {
+            // 尝试查找一些已知的helper函数
+            const char* helper_names[] = {"helper_fma4ps_ymm", "helper_fma4pd_ymm", 
+                                         "helper_vpermilpd_ymm", "helper_vpermilps_ymm", NULL};
+            for (int i = 0; helper_names[i]; i++) {
+                uint64_t addr = jit_find_symbol(ctx, helper_names[i]);
+                if (addr) {
+                    printf("Found helper '%s' at 0x%lx\n", helper_names[i], addr);
+                } else {
+                    printf("Helper '%s' not found (was it in the helper file?)\n", helper_names[i]);
+                }
             }
         }
         
