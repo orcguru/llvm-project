@@ -376,8 +376,6 @@ bool MinimalJITLinker::setupPLTAndGOT() {
     std::cout << "  PLT entries: " << pltEntryCount << ", size: " << pltSize << " bytes" << std::endl;
     std::cout << "  GOT entries: " << gotEntryCount << ", size: " << gotSize << " bytes" << std::endl;
 
-    // 删除未使用的变量 'newBase'，因为我们直接使用 Ctx.CurrentAlloc.BaseAddress
-
     // 在现有内存之后分配 PLT 和 GOT
     // 注意：我们需要确保 PLT 在代码附近（在 ±128MB 范围内）
     size_t newTotalSize = Ctx.CurrentAlloc.Size + pltSize + gotSize;
@@ -411,12 +409,20 @@ bool MinimalJITLinker::setupPLTAndGOT() {
     }
 
     // 设置 PLT 和 GOT 地址
-    Ctx.PLTBaseAddr = Ctx.CurrentAlloc.BaseAddress + (Ctx.CurrentAlloc.Size - pltSize - gotSize);
+    // 将 GOT 放在代码段之后，但确保在 ±2GB 范围内
+    // 计算代码段的结束地址
+    uint64_t codeEnd = Ctx.CurrentAlloc.BaseAddress + (Ctx.CurrentAlloc.Size - pltSize - gotSize);
+
+    // 将 PLT 和 GOT 放在代码段之后
+    Ctx.PLTBaseAddr = codeEnd;
     Ctx.GOTBaseAddr = Ctx.PLTBaseAddr + pltSize;
     Ctx.GOTPtr = Ctx.CurrentAlloc.Memory + (Ctx.GOTBaseAddr - Ctx.CurrentAlloc.BaseAddress);
 
     std::cout << "DEBUG: PLT base: 0x" << std::hex << Ctx.PLTBaseAddr << std::dec << std::endl;
     std::cout << "DEBUG: GOT base: 0x" << std::hex << Ctx.GOTBaseAddr << std::dec << std::endl;
+    std::cout << "DEBUG: Code end: 0x" << std::hex << codeEnd << std::dec << std::endl;
+    std::cout << "DEBUG: Distance from code to GOT: 0x" << std::hex
+              << (Ctx.GOTBaseAddr - Ctx.CurrentAlloc.BaseAddress) << std::dec << std::endl;
 
     // 初始化 PLT 条目向量
     Ctx.PLTEntries.resize(pltEntryCount);
@@ -429,9 +435,6 @@ bool MinimalJITLinker::setupPLTAndGOT() {
         // 1. 从 GOT 加载目标地址到 x16
         // 2. 跳转到 x16
         // 注意：这里需要正确的 AArch64 指令编码
-
-        // 删除未使用的变量 'gotEntryAddr'，因为我们目前还没有使用它
-        // 后续如果需要生成实际的 PLT 指令，会需要这个地址
 
         // 简化：我们暂时不生成实际的指令，只是设置占位符
         // 实际实现中需要正确的 AArch64 指令编码
@@ -547,6 +550,7 @@ bool MinimalJITLinker::applyRelocation(uint32_t type, char* location,
     int64_t branch_offset;
     uint32_t imm;
     uint32_t imm26;
+    int64_t page_shifted;
 
     switch (type) {
     // --- Existing AArch64 relocations ---
@@ -560,16 +564,33 @@ bool MinimalJITLinker::applyRelocation(uint32_t type, char* location,
     case 275: // R_AARCH64_ADR_PREL_PG_HI21
         instr = *reinterpret_cast<uint32_t*>(location);
         page_offset = ((value & ~0xFFFULL) - (relocAddr & ~0xFFFULL));
-        if (page_offset < -((1LL) << 20) || page_offset >= ((1LL) << 20)) {
-            fprintf(stderr, "Relocation R_AARCH64_ADR_PREL_PG_HI21/R_AARCH64_ADR_GOT_PAGE out of range: 0x%lx relocOffset:0x%lx value:0x%lx relocAddr:0x%lx\n",
-                   page_offset, relocOffset, value, relocAddr);
+        
+        // 计算页偏移（每页 4KB，右移 12 位）
+        page_shifted = page_offset >> 12;
+        
+        // 检查页偏移是否在 21 位有符号范围内 [-2^20, 2^20-1]
+        if (page_shifted < -((1LL) << 20) || page_shifted >= ((1LL) << 20)) {
+            fprintf(stderr, 
+                "Relocation R_AARCH64_ADR_PREL_PG_HI21/R_AARCH64_ADR_GOT_PAGE out of range: "
+                "byte_offset=0x%lx, page_offset=0x%lx pages, "
+                "relocOffset=0x%lx, value=0x%lx, relocAddr=0x%lx\n",
+                page_offset, page_shifted, relocOffset, value, relocAddr);
             return false;
         }
-        imm = (page_offset >> 12) & 0x1FFFFF;
-        instr &= ~(0x1FFFFF << 5);
-        instr &= ~(0x3 << 29);
+        
+        // 取 21 位有符号立即数
+        imm = page_shifted & 0x1FFFFF;
+        
+        // 清除指令中的立即数字段
+        instr &= ~(0x1FFFFF << 5);  // immhi
+        instr &= ~(0x3 << 29);      // immlo
+        
+        // 设置 immhi 字段（bits [20:2]）
         instr |= ((imm >> 2) & 0x7FFFF) << 5;
+        
+        // 设置 immlo 字段（bits [1:0]）
         instr |= (imm & 0x3) << 29;
+        
         *reinterpret_cast<uint32_t*>(location) = instr;
         break;
 
@@ -648,8 +669,8 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
         const char* symName = strtab + sym->st_name;
         uint64_t symValue = sym->st_value;
         uint64_t targetAddr = 0;
-        bool useGOT = false;
         bool usePLT = false;
+        uint64_t gotAddr = 0;  // 用于存储 GOT 条目地址
 
         // 处理 R_AARCH64_JUMP26 和 R_AARCH64_CALL26
         if (type == 283 || type == 282) {  // R_AARCH64_CALL26 或 R_AARCH64_JUMP26
@@ -701,9 +722,6 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
 
                 // 应用重定位到 PLT 条目
                 char* locPtr = memory + rela->r_offset;
-                // 删除未使用的变量 'plt_offset'，因为我们直接使用 applyRelocation 计算偏移
-                // applyRelocation 内部会计算正确的偏移
-
                 if (!applyRelocation(type, locPtr, pltAddr + rela->r_addend,
                                    rela->r_addend, location, rela->r_offset)) {
                     fprintf(stderr, "Failed to apply PLT relocation type %u for symbol %s\n", type, symName);
@@ -717,12 +735,8 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
             continue;
         }
 
-        // 处理 R_AARCH64_ADR_GOT_PAGE 和 R_AARCH64_LD64_GOT_LO12_NC
-        if (type == 311 || type == 312) {  // R_AARCH64_ADR_GOT_PAGE 或 R_AARCH64_LD64_GOT_LO12_NC
-            useGOT = true;
-        }
-
-        if (useGOT) {
+        // 处理 R_AARCH64_ADR_GOT_PAGE
+        if (type == 311) {  // R_AARCH64_ADR_GOT_PAGE
             // 获取符号的实际地址
             if (sym->st_shndx != SHN_UNDEF) {
                 targetAddr = baseAddr + symValue;
@@ -737,25 +751,51 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                 }
             }
 
-            // 检查目标地址是否在 ±2GB 范围内
-            uint64_t location = baseAddr + rela->r_offset;
-            int64_t offset = targetAddr + rela->r_addend - location;
+            // 总是为 R_AARCH64_ADR_GOT_PAGE 使用 GOT 条目
+            // 因为这是专门用于 GOT 访问的重定位
+            // 获取或创建 GOT 条目
+            gotAddr = getGOTEntryForSymbol(symName, targetAddr);
+            if (gotAddr == 0) {
+                fprintf(stderr, "Failed to get GOT entry for symbol: %s\n", symName);
+                return false;
+            }
 
-            // 如果超出 ±2GB 范围，使用 GOT
-            if (llabs(offset) >= (1LL << 31)) {
-                // 获取或创建 GOT 条目
-                uint64_t gotAddr = getGOTEntryForSymbol(symName, targetAddr);
-                if (gotAddr == 0) {
-                    fprintf(stderr, "Failed to get GOT entry for symbol: %s\n", symName);
+            // 将重定位目标设置为 GOT 条目地址
+            targetAddr = gotAddr;
+            std::cout << "DEBUG: R_AARCH64_ADR_GOT_PAGE for symbol: " << symName
+                      << ", GOT addr=0x" << std::hex << gotAddr << std::dec << std::endl;
+        }
+        // 处理 R_AARCH64_LD64_GOT_LO12_NC
+        else if (type == 312) {  // R_AARCH64_LD64_GOT_LO12_NC
+            // 获取符号的实际地址
+            if (sym->st_shndx != SHN_UNDEF) {
+                targetAddr = baseAddr + symValue;
+            } else {
+                // 查找外部符号
+                auto it = Ctx.SymbolTable.find(symName);
+                if (it != Ctx.SymbolTable.end()) {
+                    targetAddr = it->second;
+                } else {
+                    fprintf(stderr, "Undefined symbol: %s\n", symName);
                     return false;
                 }
-
-                // 将重定位目标设置为 GOT 条目地址
-                targetAddr = gotAddr;
-                std::cout << "DEBUG: Using GOT entry for symbol: " << symName
-                          << ", GOT addr=0x" << std::hex << gotAddr << std::dec << std::endl;
             }
-        } else if (!usePLT) {
+
+            // 总是为 R_AARCH64_LD64_GOT_LO12_NC 使用 GOT 条目
+            // 因为这是专门用于 GOT 访问的重定位
+            // 获取或创建 GOT 条目
+            gotAddr = getGOTEntryForSymbol(symName, targetAddr);
+            if (gotAddr == 0) {
+                fprintf(stderr, "Failed to get GOT entry for symbol: %s\n", symName);
+                return false;
+            }
+
+            // 将重定位目标设置为 GOT 条目地址
+            targetAddr = gotAddr;
+            std::cout << "DEBUG: R_AARCH64_LD64_GOT_LO12_NC for symbol: " << symName
+                      << ", GOT addr=0x" << std::hex << gotAddr << std::dec << std::endl;
+        }
+        else if (!usePLT) {
             // Normal symbol resolution
             if (sym->st_shndx != SHN_UNDEF) {
                 targetAddr = baseAddr + symValue;
