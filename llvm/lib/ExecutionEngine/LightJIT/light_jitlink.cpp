@@ -362,27 +362,28 @@ bool MinimalJITLinker::setupPLTAndGOT() {
     if (Ctx.PLTBaseAddr != 0 || Ctx.GOTBaseAddr != 0) {
         return true;  // 已经设置过了
     }
-    
+
     // 计算 PLT 和 GOT 所需大小
     // 初始分配 16 个 PLT 条目，每个条目 2 条指令（8 字节）
     // 实际上 AArch64 PLT 条目通常是 16 字节，但为了简化我们先使用 8 字节
     size_t pltEntryCount = 16;
     size_t gotEntryCount = 16;
-    
+
     size_t pltSize = pltEntryCount * 8;  // 每个 PLT 条目 8 字节
     size_t gotSize = gotEntryCount * 8;  // 每个 GOT 条目 8 字节
-    
+
     std::cout << "DEBUG: Setting up PLT and GOT" << std::endl;
     std::cout << "  PLT entries: " << pltEntryCount << ", size: " << pltSize << " bytes" << std::endl;
     std::cout << "  GOT entries: " << gotEntryCount << ", size: " << gotSize << " bytes" << std::endl;
-    
+
+    // 删除未使用的变量 'newBase'，因为我们直接使用 Ctx.CurrentAlloc.BaseAddress
+
     // 在现有内存之后分配 PLT 和 GOT
     // 注意：我们需要确保 PLT 在代码附近（在 ±128MB 范围内）
-    uint64_t newBase = Ctx.CurrentAlloc.BaseAddress;
     size_t newTotalSize = Ctx.CurrentAlloc.Size + pltSize + gotSize;
-    
+
     // 尝试在当前内存之后扩展
-    void* newMemory = mremap(Ctx.CurrentAlloc.Memory, Ctx.CurrentAlloc.Size, 
+    void* newMemory = mremap(Ctx.CurrentAlloc.Memory, Ctx.CurrentAlloc.Size,
                             newTotalSize, MREMAP_MAYMOVE);
     if (newMemory == MAP_FAILED) {
         // 如果 mremap 失败，分配新内存并复制
@@ -390,15 +391,15 @@ bool MinimalJITLinker::setupPLTAndGOT() {
         newMemory = mmap(nullptr, newTotalSize,
                         PROT_READ | PROT_WRITE | PROT_EXEC,
                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        
+
         if (newMemory == MAP_FAILED) {
             perror("mmap failed for PLT/GOT");
             return false;
         }
-        
+
         // 复制现有数据
         memcpy(newMemory, Ctx.CurrentAlloc.Memory, Ctx.CurrentAlloc.Size);
-        
+
         // 更新上下文
         Ctx.CurrentAlloc.Memory = static_cast<char*>(newMemory);
         Ctx.CurrentAlloc.Size = newTotalSize;
@@ -408,49 +409,48 @@ bool MinimalJITLinker::setupPLTAndGOT() {
         Ctx.CurrentAlloc.Memory = static_cast<char*>(newMemory);
         Ctx.CurrentAlloc.Size = newTotalSize;
     }
-    
+
     // 设置 PLT 和 GOT 地址
     Ctx.PLTBaseAddr = Ctx.CurrentAlloc.BaseAddress + (Ctx.CurrentAlloc.Size - pltSize - gotSize);
     Ctx.GOTBaseAddr = Ctx.PLTBaseAddr + pltSize;
     Ctx.GOTPtr = Ctx.CurrentAlloc.Memory + (Ctx.GOTBaseAddr - Ctx.CurrentAlloc.BaseAddress);
-    
+
     std::cout << "DEBUG: PLT base: 0x" << std::hex << Ctx.PLTBaseAddr << std::dec << std::endl;
     std::cout << "DEBUG: GOT base: 0x" << std::hex << Ctx.GOTBaseAddr << std::dec << std::endl;
-    
+
     // 初始化 PLT 条目向量
     Ctx.PLTEntries.resize(pltEntryCount);
-    
+
     // 初始化 PLT 条目为跳转桩
     for (size_t i = 0; i < pltEntryCount; i++) {
         AArch64PLTEntry* entry = &Ctx.PLTEntries[i];
-        
+
         // 简单的 PLT 桩代码：
         // 1. 从 GOT 加载目标地址到 x16
         // 2. 跳转到 x16
         // 注意：这里需要正确的 AArch64 指令编码
-        
-        // 计算 GOT 条目偏移
-        // 每个 GOT 条目 8 字节
-        uint64_t gotEntryAddr = Ctx.GOTBaseAddr + (i * 8);
-        
+
+        // 删除未使用的变量 'gotEntryAddr'，因为我们目前还没有使用它
+        // 后续如果需要生成实际的 PLT 指令，会需要这个地址
+
         // 简化：我们暂时不生成实际的指令，只是设置占位符
         // 实际实现中需要正确的 AArch64 指令编码
         entry->instr0 = 0x58000000;  // 占位符
         entry->instr1 = 0x58000000;  // 占位符
-        
+
         // 将 PLT 条目写入内存
-        char* pltLocation = Ctx.CurrentAlloc.Memory + 
-                           (Ctx.PLTBaseAddr - Ctx.CurrentAlloc.BaseAddress) + 
+        char* pltLocation = Ctx.CurrentAlloc.Memory +
+                           (Ctx.PLTBaseAddr - Ctx.CurrentAlloc.BaseAddress) +
                            (i * 8);
         *reinterpret_cast<AArch64PLTEntry*>(pltLocation) = *entry;
     }
-    
+
     // 初始化 GOT 条目为 0
     uint64_t* gotEntries = reinterpret_cast<uint64_t*>(Ctx.GOTPtr);
     for (size_t i = 0; i < gotEntryCount; i++) {
         gotEntries[i] = 0;
     }
-    
+
     return true;
 }
 
@@ -655,7 +655,8 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
 
                 // 应用重定位到 PLT 条目
                 char* locPtr = memory + rela->r_offset;
-                int64_t plt_offset = pltAddr - location;
+                // 删除未使用的变量 'plt_offset'，因为我们直接使用 applyRelocation 计算偏移
+                // applyRelocation 内部会计算正确的偏移
 
                 if (!applyRelocation(type, locPtr, pltAddr + rela->r_addend,
                                    rela->r_addend, location, rela->r_offset)) {
