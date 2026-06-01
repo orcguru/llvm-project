@@ -451,7 +451,53 @@ bool MinimalJITLinker::setupPLTAndGOT() {
         gotEntries[i] = 0;
     }
 
+    // 重置 GOT 索引
+    Ctx.NextGOTIndex = 0;
+    Ctx.GotSymbolMap.clear();
+
     return true;
+}
+
+// 实现
+uint64_t MinimalJITLinker::getGOTEntryForSymbol(const std::string& symbolName, uint64_t targetAddr) {
+    // 检查是否已经有这个符号的 GOT 条目
+    auto it = Ctx.GotSymbolMap.find(symbolName);
+    if (it != Ctx.GotSymbolMap.end()) {
+        uint64_t gotEntryAddr = Ctx.GOTBaseAddr + (it->second * 8);
+        // 确保 GOT 条目中的地址是最新的
+        uint64_t* gotEntries = reinterpret_cast<uint64_t*>(Ctx.GOTPtr);
+        gotEntries[it->second] = targetAddr;
+        return gotEntryAddr;
+    }
+
+    // 分配新的 GOT 槽位
+    size_t slotIndex = Ctx.NextGOTIndex;
+
+    // 检查 GOT 是否已满
+    size_t gotEntryCount = 16;  // 与 setupPLTAndGOT 中一致
+    if (slotIndex >= gotEntryCount) {
+        std::cerr << "ERROR: GOT table full, cannot allocate entry for symbol: "
+                  << symbolName << std::endl;
+        return 0;
+    }
+
+    // 在映射中记录符号
+    Ctx.GotSymbolMap[symbolName] = slotIndex;
+
+    // 写入目标地址到 GOT 条目
+    uint64_t* gotEntries = reinterpret_cast<uint64_t*>(Ctx.GOTPtr);
+    gotEntries[slotIndex] = targetAddr;
+
+    // 更新下一个可用索引
+    Ctx.NextGOTIndex++;
+
+    uint64_t gotAddr = Ctx.GOTBaseAddr + (slotIndex * 8);
+    std::cout << "DEBUG: Allocated GOT entry for symbol: " << symbolName
+              << " at 0x" << std::hex << gotAddr << std::dec
+              << " (slot " << slotIndex << "), value=0x"
+              << std::hex << targetAddr << std::dec << std::endl;
+
+    return gotAddr;
 }
 
 uint64_t MinimalJITLinker::getPLTEntryForSymbol(const std::string& symbolName) {
@@ -491,7 +537,6 @@ uint64_t MinimalJITLinker::getPLTEntryForSymbol(const std::string& symbolName) {
     return pltAddr;
 }
 
-// Update the applyRelocation function to handle far jumps
 bool MinimalJITLinker::applyRelocation(uint32_t type, char* location,
                     uint64_t targetAddr, int64_t addend,
                     uint64_t relocAddr, uint64_t relocOffset) {
@@ -516,7 +561,8 @@ bool MinimalJITLinker::applyRelocation(uint32_t type, char* location,
         instr = *reinterpret_cast<uint32_t*>(location);
         page_offset = ((value & ~0xFFFULL) - (relocAddr & ~0xFFFULL));
         if (page_offset < -((1LL) << 20) || page_offset >= ((1LL) << 20)) {
-            fprintf(stderr, "Relocation R_AARCH64_ADR_PREL_PG_HI21/R_AARCH64_ADR_GOT_PAGE out of range: 0x%lx relocOffset:0x%lx value:0x%lx relocAddr:0x%lx\n", page_offset, relocOffset, value, relocAddr);
+            fprintf(stderr, "Relocation R_AARCH64_ADR_PREL_PG_HI21/R_AARCH64_ADR_GOT_PAGE out of range: 0x%lx relocOffset:0x%lx value:0x%lx relocAddr:0x%lx\n",
+                   page_offset, relocOffset, value, relocAddr);
             return false;
         }
         imm = (page_offset >> 12) & 0x1FFFFF;
@@ -565,7 +611,6 @@ bool MinimalJITLinker::applyRelocation(uint32_t type, char* location,
     return true;
 }
 
-// We need to update the processRelocations function to pass symbol names
 bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                        Elf64_Shdr* relocShdr,
                        char* memory,
@@ -603,9 +648,10 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
         const char* symName = strtab + sym->st_name;
         uint64_t symValue = sym->st_value;
         uint64_t targetAddr = 0;
+        bool useGOT = false;
         bool usePLT = false;
 
-        // 在 processRelocations 函数中，找到处理 R_AARCH64_JUMP26 和 R_AARCH64_CALL26 的部分
+        // 处理 R_AARCH64_JUMP26 和 R_AARCH64_CALL26
         if (type == 283 || type == 282) {  // R_AARCH64_CALL26 或 R_AARCH64_JUMP26
             // 计算目标地址
             uint64_t targetAddr = 0;
@@ -668,10 +714,48 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                           << std::hex << pltAddr << std::dec << std::endl;
             }
 
-            continue;  // 继续处理下一个重定位
+            continue;
         }
-        
-        if (!usePLT) {
+
+        // 处理 R_AARCH64_ADR_GOT_PAGE 和 R_AARCH64_LD64_GOT_LO12_NC
+        if (type == 311 || type == 312) {  // R_AARCH64_ADR_GOT_PAGE 或 R_AARCH64_LD64_GOT_LO12_NC
+            useGOT = true;
+        }
+
+        if (useGOT) {
+            // 获取符号的实际地址
+            if (sym->st_shndx != SHN_UNDEF) {
+                targetAddr = baseAddr + symValue;
+            } else {
+                // 查找外部符号
+                auto it = Ctx.SymbolTable.find(symName);
+                if (it != Ctx.SymbolTable.end()) {
+                    targetAddr = it->second;
+                } else {
+                    fprintf(stderr, "Undefined symbol: %s\n", symName);
+                    return false;
+                }
+            }
+
+            // 检查目标地址是否在 ±2GB 范围内
+            uint64_t location = baseAddr + rela->r_offset;
+            int64_t offset = targetAddr + rela->r_addend - location;
+
+            // 如果超出 ±2GB 范围，使用 GOT
+            if (llabs(offset) >= (1LL << 31)) {
+                // 获取或创建 GOT 条目
+                uint64_t gotAddr = getGOTEntryForSymbol(symName, targetAddr);
+                if (gotAddr == 0) {
+                    fprintf(stderr, "Failed to get GOT entry for symbol: %s\n", symName);
+                    return false;
+                }
+
+                // 将重定位目标设置为 GOT 条目地址
+                targetAddr = gotAddr;
+                std::cout << "DEBUG: Using GOT entry for symbol: " << symName
+                          << ", GOT addr=0x" << std::hex << gotAddr << std::dec << std::endl;
+            }
+        } else if (!usePLT) {
             // Normal symbol resolution
             if (sym->st_shndx != SHN_UNDEF) {
                 targetAddr = baseAddr + symValue;

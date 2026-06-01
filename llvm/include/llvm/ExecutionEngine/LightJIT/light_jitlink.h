@@ -39,6 +39,10 @@ struct JITContext {
         size_t CodeSize = 0;
     };
     std::vector<LoadedModule> Modules;
+
+    // GOT 相关
+    std::unordered_map<std::string, uint64_t> GotSymbolMap;  // 符号名 -> GOT 条目索引
+    uint64_t NextGOTIndex = 0;  // 下一个可用的 GOT 槽位索引
 };
 
 // 自定义的极简 ELF 解析器
@@ -87,6 +91,7 @@ private:
                         uint64_t relocAddr, uint64_t relocOffset);
     bool setupPLTAndGOT();
     uint64_t getPLTEntryForSymbol(const std::string& symbolName);
+    uint64_t getGOTEntryForSymbol(const std::string& symbolName, uint64_t targetAddr);
 
     void printMemoryLayout(const MinimalELF64Parser& parser);
     void printSectionsInfo(const MinimalELF64Parser& parser);
