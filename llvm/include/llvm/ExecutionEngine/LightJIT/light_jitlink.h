@@ -1,4 +1,3 @@
-// light_jitlink.h
 #ifndef LIGHT_JITLINK_H
 #define LIGHT_JITLINK_H
 
@@ -9,10 +8,23 @@
 #include <vector>
 #include <cstdio>
 
+// PLT 条目结构
+struct AArch64PLTEntry {
+    uint32_t instr0;  // ldr x16, [x16, #offset]  (loading from GOT.PLT)
+    uint32_t instr1;  // br x16                   (jump to target)
+};
+
 // 简化的链接上下文
 struct JITContext {
     // 符号表
     std::unordered_map<std::string, uint64_t> SymbolTable;
+    
+    // PLT 和 GOT 相关
+    std::vector<AArch64PLTEntry> PLTEntries;
+    std::unordered_map<std::string, uint64_t> PLTSymbolMap;  // symbol name -> PLT slot index
+    uint64_t PLTBaseAddr = 0;
+    uint64_t GOTBaseAddr = 0;
+    char* GOTPtr = nullptr;
     
     // 当前分配的内存
     struct Allocation {
@@ -73,6 +85,8 @@ private:
     bool applyRelocation(uint32_t type, char* location, 
                         uint64_t targetAddr, int64_t addend,
                         uint64_t relocAddr, uint64_t relocOffset);
+    bool setupPLTAndGOT();
+    uint64_t getPLTEntryForSymbol(const std::string& symbolName);
 
     void printMemoryLayout(const MinimalELF64Parser& parser);
     void printSectionsInfo(const MinimalELF64Parser& parser);

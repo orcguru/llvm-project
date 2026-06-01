@@ -165,45 +165,6 @@ void MinimalJITLinker::printSectionsInfo(const MinimalELF64Parser& parser) {
     }
 }
 
-bool MinimalJITLinker::link(const char* objectData, size_t objectSize, uint64_t baseAddress) {
-    MinimalELF64Parser parser(objectData, objectSize);
-    if (!parser.isValid()) {
-        fprintf(stderr, "Invalid ELF file\n");
-        return false;
-    }
-
-    printSectionsInfo(parser);
-
-    // 1. 计算总大小
-    size_t totalSize = calculateTotalSize(parser);
-    if (totalSize == 0) {
-        fprintf(stderr, "Failed to calculate total size\n");
-        return false;
-    }
-
-    std::cout << "DEBUG: Required memory size = " << totalSize << " bytes" << std::endl;
-    std::cout << "DEBUG: Preferred address = 0x" << std::hex << baseAddress << std::dec << std::endl;
-
-    // 2. 分配内存
-    if (!allocateMemory(totalSize, baseAddress)) {
-        fprintf(stderr, "Failed to allocate memory\n");
-        return false;
-    }
-
-    printMemoryLayout(parser);
-
-    // 3. 构建符号表
-    buildSymbolTable(parser);
-
-    // 4. 复制段并处理重定位
-    if (!copySectionsAndRelocate(parser)) {
-        fprintf(stderr, "Failed to copy sections and relocate\n");
-        return false;
-    }
-
-    return true;
-}
-
 size_t MinimalJITLinker::calculateTotalSize(const MinimalELF64Parser& parser) {
     uint64_t minAddr = UINT64_MAX;
     uint64_t maxAddr = 0;
@@ -396,6 +357,215 @@ void MinimalJITLinker::printMemoryLayout(const MinimalELF64Parser& parser) {
     }
 }
 
+bool MinimalJITLinker::setupPLTAndGOT() {
+    // 检查 PLT 和 GOT 是否已经设置
+    if (Ctx.PLTBaseAddr != 0 || Ctx.GOTBaseAddr != 0) {
+        return true;  // 已经设置过了
+    }
+    
+    // 计算 PLT 和 GOT 所需大小
+    // 初始分配 16 个 PLT 条目，每个条目 2 条指令（8 字节）
+    // 实际上 AArch64 PLT 条目通常是 16 字节，但为了简化我们先使用 8 字节
+    size_t pltEntryCount = 16;
+    size_t gotEntryCount = 16;
+    
+    size_t pltSize = pltEntryCount * 8;  // 每个 PLT 条目 8 字节
+    size_t gotSize = gotEntryCount * 8;  // 每个 GOT 条目 8 字节
+    
+    std::cout << "DEBUG: Setting up PLT and GOT" << std::endl;
+    std::cout << "  PLT entries: " << pltEntryCount << ", size: " << pltSize << " bytes" << std::endl;
+    std::cout << "  GOT entries: " << gotEntryCount << ", size: " << gotSize << " bytes" << std::endl;
+    
+    // 在现有内存之后分配 PLT 和 GOT
+    // 注意：我们需要确保 PLT 在代码附近（在 ±128MB 范围内）
+    uint64_t newBase = Ctx.CurrentAlloc.BaseAddress;
+    size_t newTotalSize = Ctx.CurrentAlloc.Size + pltSize + gotSize;
+    
+    // 尝试在当前内存之后扩展
+    void* newMemory = mremap(Ctx.CurrentAlloc.Memory, Ctx.CurrentAlloc.Size, 
+                            newTotalSize, MREMAP_MAYMOVE);
+    if (newMemory == MAP_FAILED) {
+        // 如果 mremap 失败，分配新内存并复制
+        std::cout << "DEBUG: mremap failed, allocating new memory" << std::endl;
+        newMemory = mmap(nullptr, newTotalSize,
+                        PROT_READ | PROT_WRITE | PROT_EXEC,
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        
+        if (newMemory == MAP_FAILED) {
+            perror("mmap failed for PLT/GOT");
+            return false;
+        }
+        
+        // 复制现有数据
+        memcpy(newMemory, Ctx.CurrentAlloc.Memory, Ctx.CurrentAlloc.Size);
+        
+        // 更新上下文
+        Ctx.CurrentAlloc.Memory = static_cast<char*>(newMemory);
+        Ctx.CurrentAlloc.Size = newTotalSize;
+        Ctx.CurrentAlloc.BaseAddress = reinterpret_cast<uint64_t>(newMemory);
+    } else {
+        // 更新上下文
+        Ctx.CurrentAlloc.Memory = static_cast<char*>(newMemory);
+        Ctx.CurrentAlloc.Size = newTotalSize;
+    }
+    
+    // 设置 PLT 和 GOT 地址
+    Ctx.PLTBaseAddr = Ctx.CurrentAlloc.BaseAddress + (Ctx.CurrentAlloc.Size - pltSize - gotSize);
+    Ctx.GOTBaseAddr = Ctx.PLTBaseAddr + pltSize;
+    Ctx.GOTPtr = Ctx.CurrentAlloc.Memory + (Ctx.GOTBaseAddr - Ctx.CurrentAlloc.BaseAddress);
+    
+    std::cout << "DEBUG: PLT base: 0x" << std::hex << Ctx.PLTBaseAddr << std::dec << std::endl;
+    std::cout << "DEBUG: GOT base: 0x" << std::hex << Ctx.GOTBaseAddr << std::dec << std::endl;
+    
+    // 初始化 PLT 条目向量
+    Ctx.PLTEntries.resize(pltEntryCount);
+    
+    // 初始化 PLT 条目为跳转桩
+    for (size_t i = 0; i < pltEntryCount; i++) {
+        AArch64PLTEntry* entry = &Ctx.PLTEntries[i];
+        
+        // 简单的 PLT 桩代码：
+        // 1. 从 GOT 加载目标地址到 x16
+        // 2. 跳转到 x16
+        // 注意：这里需要正确的 AArch64 指令编码
+        
+        // 计算 GOT 条目偏移
+        // 每个 GOT 条目 8 字节
+        uint64_t gotEntryAddr = Ctx.GOTBaseAddr + (i * 8);
+        
+        // 简化：我们暂时不生成实际的指令，只是设置占位符
+        // 实际实现中需要正确的 AArch64 指令编码
+        entry->instr0 = 0x58000000;  // 占位符
+        entry->instr1 = 0x58000000;  // 占位符
+        
+        // 将 PLT 条目写入内存
+        char* pltLocation = Ctx.CurrentAlloc.Memory + 
+                           (Ctx.PLTBaseAddr - Ctx.CurrentAlloc.BaseAddress) + 
+                           (i * 8);
+        *reinterpret_cast<AArch64PLTEntry*>(pltLocation) = *entry;
+    }
+    
+    // 初始化 GOT 条目为 0
+    uint64_t* gotEntries = reinterpret_cast<uint64_t*>(Ctx.GOTPtr);
+    for (size_t i = 0; i < gotEntryCount; i++) {
+        gotEntries[i] = 0;
+    }
+    
+    return true;
+}
+
+uint64_t MinimalJITLinker::getPLTEntryForSymbol(const std::string& symbolName) {
+    // 检查是否已经有这个符号的 PLT 条目
+    auto it = Ctx.PLTSymbolMap.find(symbolName);
+    if (it != Ctx.PLTSymbolMap.end()) {
+        return Ctx.PLTBaseAddr + (it->second * 8);  // 每个条目 8 字节
+    }
+
+    // 分配新的 PLT 槽位
+    size_t slotIndex = Ctx.PLTSymbolMap.size();
+    if (slotIndex >= Ctx.PLTEntries.size()) {
+        std::cerr << "ERROR: PLT table full, cannot allocate entry for symbol: "
+                  << symbolName << std::endl;
+        return 0;
+    }
+
+    // 在映射中记录符号
+    Ctx.PLTSymbolMap[symbolName] = slotIndex;
+
+    // 设置 GOT 条目
+    uint64_t* gotEntries = reinterpret_cast<uint64_t*>(Ctx.GOTPtr);
+    auto symIt = Ctx.SymbolTable.find(symbolName);
+    if (symIt != Ctx.SymbolTable.end()) {
+        // 如果符号已经在符号表中，直接设置 GOT 条目
+        gotEntries[slotIndex] = symIt->second;
+    } else {
+        // 否则，设置为 0，稍后解析
+        gotEntries[slotIndex] = 0;
+    }
+
+    uint64_t pltAddr = Ctx.PLTBaseAddr + (slotIndex * 8);
+    std::cout << "DEBUG: Allocated PLT entry for symbol: " << symbolName
+              << " at 0x" << std::hex << pltAddr << std::dec
+              << " (slot " << slotIndex << ")" << std::endl;
+
+    return pltAddr;
+}
+
+// Update the applyRelocation function to handle far jumps
+bool MinimalJITLinker::applyRelocation(uint32_t type, char* location,
+                    uint64_t targetAddr, int64_t addend,
+                    uint64_t relocAddr, uint64_t relocOffset) {
+    uint64_t value = targetAddr + addend;
+    uint64_t instr;
+    uint64_t result;
+    int64_t page_offset;
+    int64_t branch_offset;
+    uint32_t imm;
+    uint32_t imm26;
+
+    switch (type) {
+    // --- Existing AArch64 relocations ---
+    case 277: // R_AARCH64_ADD_ABS_LO12_NC
+        instr = *reinterpret_cast<uint32_t*>(location);
+        result = (instr & ~(0xFFF << 10)) | ((value & 0xFFF) << 10);
+        *reinterpret_cast<uint32_t*>(location) = result;
+        break;
+
+    case 311: // R_AARCH64_ADR_GOT_PAGE
+    case 275: // R_AARCH64_ADR_PREL_PG_HI21
+        instr = *reinterpret_cast<uint32_t*>(location);
+        page_offset = ((value & ~0xFFFULL) - (relocAddr & ~0xFFFULL));
+        if (page_offset < -((1LL) << 20) || page_offset >= ((1LL) << 20)) {
+            fprintf(stderr, "Relocation R_AARCH64_ADR_PREL_PG_HI21/R_AARCH64_ADR_GOT_PAGE out of range: 0x%lx relocOffset:0x%lx\n", page_offset, relocOffset);
+            return false;
+        }
+        imm = (page_offset >> 12) & 0x1FFFFF;
+        instr &= ~(0x1FFFFF << 5);
+        instr &= ~(0x3 << 29);
+        instr |= ((imm >> 2) & 0x7FFFF) << 5;
+        instr |= (imm & 0x3) << 29;
+        *reinterpret_cast<uint32_t*>(location) = instr;
+        break;
+
+    case 283: // R_AARCH64_CALL26
+    case 282: // R_AARCH64_JUMP26
+        // Calculate the actual branch offset
+        branch_offset = value - relocAddr;
+        
+        // Check if target is within range (±128MB)
+        if (branch_offset >= -(1 << 27) && branch_offset < (1 << 27)) {
+            // Target is within range, encode directly
+            instr = *reinterpret_cast<uint32_t*>(location);
+            imm26 = (branch_offset >> 2) & 0x3FFFFFF;
+            instr = (instr & 0xFC000000) | imm26;
+            *reinterpret_cast<uint32_t*>(location) = instr;
+        } else {
+            // Target is out of range, use PLT
+            // We need to know which symbol this is for
+            // Since we don't have the symbol name here, we'll need to modify
+            // the caller to pass it. For now, we'll assume it's handled elsewhere
+            fprintf(stderr, "R_AARCH64_JUMP26/CALL26 relocation out of range: offset=0x%lx\n", branch_offset);
+            fprintf(stderr, "  Target=0x%lx, Relocation=0x%lx, Distance=0x%lx\n", 
+                   value, relocAddr, static_cast<uint64_t>(llabs(branch_offset)));
+            fprintf(stderr, "  PLT support not fully implemented in this version\n");
+            return false;
+        }
+        break;
+
+    case 312: // R_AARCH64_LD64_GOT_LO12_NC
+        instr = *reinterpret_cast<uint32_t*>(location);
+        result = (instr & ~(0xFFF << 10)) | (((value & 0xFF8) >> 3) << 10);
+        *reinterpret_cast<uint32_t*>(location) = result;
+        break;
+
+    default:
+        fprintf(stderr, "Unsupported relocation type: %u (0x%x)\n", type, type);
+        return false;
+    }
+    return true;
+}
+
+// We need to update the processRelocations function to pass symbol names
 bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                        Elf64_Shdr* relocShdr,
                        char* memory,
@@ -403,7 +573,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
     const char* relocData = parser.getData() + relocShdr->sh_offset;
     size_t relocCount = relocShdr->sh_size / sizeof(Elf64_Rela);
 
-    // 查找关联的符号表
+    // Find the associated symbol table
     auto symtabShdr = parser.getSectionHeader(relocShdr->sh_link);
     if (!symtabShdr) {
         fprintf(stderr, "No symbol table for relocations\n");
@@ -412,7 +582,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
 
     const char* symtabData = parser.getData() + symtabShdr->sh_offset;
 
-    // 查找字符串表
+    // Find string table
     auto strtabShdr = parser.getSectionHeader(symtabShdr->sh_link);
     if (!strtabShdr) {
         fprintf(stderr, "No string table for symbols\n");
@@ -433,28 +603,95 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
         const char* symName = strtab + sym->st_name;
         uint64_t symValue = sym->st_value;
         uint64_t targetAddr = 0;
+        bool usePLT = false;
 
-        // 解析符号地址
-        if (sym->st_shndx != SHN_UNDEF) {
-            targetAddr = baseAddr + symValue;
-        } else {
-            // 查找全局符号表
-            auto it = Ctx.SymbolTable.find(symName);
-            if (it != Ctx.SymbolTable.end()) {
-                targetAddr = it->second;
+        // 在 processRelocations 函数中，找到处理 R_AARCH64_JUMP26 和 R_AARCH64_CALL26 的部分
+        if (type == 283 || type == 282) {  // R_AARCH64_CALL26 或 R_AARCH64_JUMP26
+            // 计算目标地址
+            uint64_t targetAddr = 0;
+            if (sym->st_shndx != SHN_UNDEF) {
+                targetAddr = baseAddr + symValue;
             } else {
-                fprintf(stderr, "Undefined symbol: %s\n", symName);
-                return false;
+                // 查找外部符号
+                auto it = Ctx.SymbolTable.find(symName);
+                if (it != Ctx.SymbolTable.end()) {
+                    targetAddr = it->second;
+                } else {
+                    // 如果符号未定义，可能需要创建 PLT 条目
+                    std::cout << "WARNING: Undefined symbol: " << symName
+                              << ", creating PLT entry" << std::endl;
+                    targetAddr = getPLTEntryForSymbol(symName);
+                    if (targetAddr == 0) {
+                        fprintf(stderr, "ERROR: Failed to create PLT entry for symbol: %s\n", symName);
+                        return false;
+                    }
+                }
+            }
+
+            // 计算分支偏移
+            uint64_t location = baseAddr + rela->r_offset;
+            int64_t branch_offset = targetAddr + rela->r_addend - location;
+
+            // 检查是否在范围内
+            if (branch_offset >= -(1 << 27) && branch_offset < (1 << 27)) {
+                // 在范围内，直接应用重定位
+                char* locPtr = memory + rela->r_offset;
+                if (!applyRelocation(type, locPtr, targetAddr + rela->r_addend,
+                                   rela->r_addend, location, rela->r_offset)) {
+                    fprintf(stderr, "Failed to apply relocation type %u for symbol %s\n", type, symName);
+                    return false;
+                }
+            } else {
+                // 超出范围，使用 PLT
+                std::cout << "DEBUG: Symbol " << symName << " is out of range (0x"
+                          << std::hex << branch_offset << "), using PLT" << std::dec << std::endl;
+
+                // 获取或创建 PLT 条目
+                uint64_t pltAddr = getPLTEntryForSymbol(symName);
+                if (pltAddr == 0) {
+                    fprintf(stderr, "ERROR: Failed to get PLT entry for symbol: %s\n", symName);
+                    return false;
+                }
+
+                // 应用重定位到 PLT 条目
+                char* locPtr = memory + rela->r_offset;
+                int64_t plt_offset = pltAddr - location;
+
+                if (!applyRelocation(type, locPtr, pltAddr + rela->r_addend,
+                                   rela->r_addend, location, rela->r_offset)) {
+                    fprintf(stderr, "Failed to apply PLT relocation type %u for symbol %s\n", type, symName);
+                    return false;
+                }
+
+                std::cout << "DEBUG: Redirected " << symName << " to PLT entry at 0x"
+                          << std::hex << pltAddr << std::dec << std::endl;
+            }
+
+            continue;  // 继续处理下一个重定位
+        }
+        
+        if (!usePLT) {
+            // Normal symbol resolution
+            if (sym->st_shndx != SHN_UNDEF) {
+                targetAddr = baseAddr + symValue;
+            } else {
+                auto it = Ctx.SymbolTable.find(symName);
+                if (it != Ctx.SymbolTable.end()) {
+                    targetAddr = it->second;
+                } else {
+                    fprintf(stderr, "Undefined symbol: %s\n", symName);
+                    return false;
+                }
             }
         }
 
-        // 应用重定位
+        // Apply relocation
         uint64_t location = baseAddr + rela->r_offset;
         char* locPtr = memory + rela->r_offset;
 
-        if (!applyRelocation(type, locPtr, targetAddr,
+        if (!applyRelocation(type, locPtr, targetAddr + rela->r_addend,
                            rela->r_addend, location, rela->r_offset)) {
-            fprintf(stderr, "Failed to apply relocation type %u\n", type);
+            fprintf(stderr, "Failed to apply relocation type %u for symbol %s\n", type, symName);
             return false;
         }
     }
@@ -462,93 +699,46 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
     return true;
 }
 
-bool MinimalJITLinker::applyRelocation(uint32_t type, char* location,
-                    uint64_t targetAddr, int64_t addend,
-                    uint64_t relocAddr, uint64_t relocOffset) {
-    uint64_t value = targetAddr + addend;
-    uint64_t instr;
-    uint64_t result;
-    int64_t page_offset;
-    int64_t branch_offset;
-    uint32_t imm;
-    uint32_t imm26;
-
-    switch (type) {
-    // --- New AArch64 relocations ---
-    // Constants are from the AArch64 ELF ABI specification.
-    case 277: // R_AARCH64_ADD_ABS_LO12_NC (0x115)
-        // value is the target address. Extract bits [11:0] and insert into the instruction.
-        // The instruction at 'location' has an immediate field in bits [21:10].
-        instr = *reinterpret_cast<uint32_t*>(location);
-        // The immediate is stored as `imm12` in the ADD/SUB (immediate) instruction.
-        // It is encoded as `imm12` for the 12-bit unsigned immediate.
-        // For this relocation, we take the low 12 bits of the value.
-        result = (instr & ~(0xFFF << 10)) | ((value & 0xFFF) << 10);
-        *reinterpret_cast<uint32_t*>(location) = result;
-        break;
-
-    case 311: // R_AARCH64_ADR_GOT_PAGE (0x137)
-    case 275: // R_AARCH64_ADR_PREL_PG_HI21 (0x113)
-        // These relocations compute a page-aligned address difference (PAGE(addr) - PAGE(reloc)).
-        // They are used to form a PC-relative address to the Global Offset Table (GOT) or a symbol.
-        // The instruction is an ADRP, which encodes a 21-bit signed page offset.
-        instr = *reinterpret_cast<uint32_t*>(location);
-        // Compute the page offset: ((value & ~0xFFF) - (relocAddr & ~0xFFF))
-        page_offset = ((value & ~0xFFFULL) - (relocAddr & ~0xFFFULL));
-        // The immediate in ADRP is split into immlo (bits 30:29) and immhi (bits 23:5) of the instruction.
-        // The combined 21-bit signed immediate is `imm = SignExtend(immhi:immlo:Zeros(12), 64)`.
-        // We encode it back.
-        if (page_offset < -((1LL) << 20) || page_offset >= ((1LL) << 20)) {
-            fprintf(stderr, "Relocation R_AARCH64_ADR_PREL_PG_HI21/R_AARCH64_ADR_GOT_PAGE out of range: 0x%lx relocOffset:0x%lx\n", page_offset, relocOffset);
-            return false;
-        }
-        // Encode the 21-bit signed immediate (page_offset >> 12) into the instruction.
-        imm = (page_offset >> 12) & 0x1FFFFF; // 21 bits
-        // Clear the immediate fields in the instruction
-        instr &= ~(0x1FFFFF << 5); // immhi at bits [23:5]
-        instr &= ~(0x3 << 29);     // immlo at bits [30:29]
-        // Set the immhi field
-        instr |= ((imm >> 2) & 0x7FFFF) << 5; // immhi is bits [20:2] of the 21-bit imm
-        // Set the immlo field
-        instr |= (imm & 0x3) << 29;
-        *reinterpret_cast<uint32_t*>(location) = instr;
-        break;
-
-    case 283: // R_AARCH64_CALL26 (0x11B)
-    case 282: // R_AARCH64_JUMP26 (0x11A)
-        // 26-bit PC-relative branch. Used for B and BL instructions.
-        instr = *reinterpret_cast<uint32_t*>(location);
-        branch_offset = value - relocAddr;
-        if (branch_offset < -(1 << 27) || branch_offset >= (1 << 27)) {
-            fprintf(stderr, "Relocation R_AARCH64_CALL26/R_AARCH64_JUMP26 out of range: 0x%lx relocOffset:0x%lx value:0x%lx relocAddr:0x%lx\n", branch_offset, relocOffset, value, relocAddr);
-            return false;
-        }
-        // The immediate is a 26-bit signed offset, shifted left by 2.
-        imm26 = (branch_offset >> 2) & 0x3FFFFFF;
-        // Clear the immediate field (bits [25:0]) and set the new value.
-        instr = (instr & 0xFC000000) | imm26;
-        *reinterpret_cast<uint32_t*>(location) = instr;
-        break;
-
-    case 312: // R_AARCH64_LD64_GOT_LO12_NC (0x138)
-        // This is similar to ADD_ABS_LO12_NC, but used specifically for loading a GOT entry
-        // with a 64-bit load (LD/ST with register offset). The immediate is 12-bit scaled by 8.
-        instr = *reinterpret_cast<uint32_t*>(location);
-        // The offset is the low 12 bits of the GOT entry address, scaled by 8 for 64-bit.
-        // The instruction's immediate field is in bits [21:10] and is a 12-bit unsigned immediate (imm12).
-        // The value to store is (value & 0xFF8) because the offset must be a multiple of 8 for 64-bit load.
-        result = (instr & ~(0xFFF << 10)) | ((value & 0xFF8) << (10 - 3)); // Shift right by 3 for scaling? Wait, careful.
-        // Actually, the instruction encoding: For LD/ST with unsigned immediate, the immediate is `imm12 << 3` for 64-bit.
-        // Therefore, to get the immediate field `imm12` from the address, we do: `imm12 = (value & 0xFF8) >> 3`.
-        // So the bits to insert into the instruction's imm12 field are (value & 0xFF8) >> 3.
-        result = (instr & ~(0xFFF << 10)) | (((value & 0xFF8) >> 3) << 10);
-        *reinterpret_cast<uint32_t*>(location) = result;
-        break;
-
-    // 添加更多重定位类型...
-    default:
-        fprintf(stderr, "Unsupported relocation type: %u (0x%x)\n", type, type);
+bool MinimalJITLinker::link(const char* objectData, size_t objectSize, uint64_t baseAddress) {
+    MinimalELF64Parser parser(objectData, objectSize);
+    if (!parser.isValid()) {
+        fprintf(stderr, "Invalid ELF file\n");
         return false;
     }
+
+    // 打印节信息
+    printSectionsInfo(parser);
+
+    // 1. 计算总大小
+    size_t totalSize = calculateTotalSize(parser);
+    if (totalSize == 0) {
+        fprintf(stderr, "Failed to calculate total size\n");
+        return false;
+    }
+
+    std::cout << "DEBUG: Required memory size = " << totalSize << " bytes" << std::endl;
+    std::cout << "DEBUG: Preferred address = 0x" << std::hex << baseAddress << std::dec << std::endl;
+
+    // 2. 分配内存
+    if (!allocateMemory(totalSize, baseAddress)) {
+        fprintf(stderr, "Failed to allocate memory\n");
+        return false;
+    }
+
+    // 3. 设置 PLT 和 GOT
+    if (!setupPLTAndGOT()) {
+        fprintf(stderr, "Failed to set up PLT and GOT\n");
+        return false;
+    }
+
+    // 4. 构建符号表
+    buildSymbolTable(parser);
+
+    // 5. 复制节并处理重定位
+    if (!copySectionsAndRelocate(parser)) {
+        fprintf(stderr, "Failed to copy sections and relocate\n");
+        return false;
+    }
+
     return true;
 }
