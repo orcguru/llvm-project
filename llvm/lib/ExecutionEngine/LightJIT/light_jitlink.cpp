@@ -289,62 +289,77 @@ void MinimalJITLinker::buildSymbolTable(const MinimalELF64Parser& parser) {
 bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser) {
     char* memory = Ctx.CurrentAlloc.Memory;
     uint64_t baseAddr = Ctx.CurrentAlloc.BaseAddress;
-    
+
     // 计算最低的段地址
     uint64_t lowestAddr = UINT64_MAX;
     for (size_t i = 0; ; i++) {
         auto shdr = parser.getSectionHeader(i);
         if (!shdr) break;
-        
+
         if (shdr->sh_type == 1 && shdr->sh_size > 0) {  // SHT_PROGBITS
             if (shdr->sh_addr < lowestAddr) {
                 lowestAddr = shdr->sh_addr;
             }
         }
     }
-    
+
     if (lowestAddr == UINT64_MAX) {
         fprintf(stderr, "No sections to load\n");
         return false;
     }
-    
+
     // 首先复制所有 PROGBITS 段
     for (size_t i = 0; ; i++) {
         auto shdr = parser.getSectionHeader(i);
         if (!shdr) break;
-        
+
         if (shdr->sh_type == 1 && shdr->sh_size > 0) { // SHT_PROGBITS
             const char* src = parser.getData() + shdr->sh_offset;
-            
+
             // 计算内存中的正确偏移
             uint64_t offset = shdr->sh_addr - lowestAddr;
-            
+
             if (offset + shdr->sh_size > Ctx.CurrentAlloc.Size) {
                 fprintf(stderr, "Section exceeds allocated memory: offset=%lu, size=%lu, alloc=%lu\n",
                        offset, shdr->sh_size, Ctx.CurrentAlloc.Size);
                 return false;
             }
-            
+
             if (shdr->sh_offset + shdr->sh_size > parser.getSize()) {
                 fprintf(stderr, "Section out of bounds in ELF file\n");
                 return false;
             }
-            
+
             char* dst = memory + offset;
-            
-            std::cout << "DEBUG: shdr->sh_addr=0x" << std::hex << shdr->sh_addr 
-                     << ", lowestAddr=0x" << lowestAddr 
-                     << ", offset=0x" << offset 
+
+            std::cout << "DEBUG: shdr->sh_addr=0x" << std::hex << shdr->sh_addr
+                     << ", lowestAddr=0x" << lowestAddr
+                     << ", offset=0x" << offset
                      << ", size=" << std::dec << shdr->sh_size << std::endl;
-            
+
             memcpy(dst, src, shdr->sh_size);
-            
+
             // 记录可执行段
             if (shdr->sh_flags & 4) { // SHF_EXECINSTR
                 Ctx.Modules.push_back({baseAddr + offset, shdr->sh_size});
             }
         }
     }
+
+    // 处理重定位节
+    for (size_t i = 0; ; i++) {
+        auto shdr = parser.getSectionHeader(i);
+        if (!shdr) break;
+
+        if (shdr->sh_type == SHT_RELA) {  // 处理重定位节
+            std::cout << "Processing relocation section " << i << std::endl;
+            if (!processRelocations(parser, shdr, memory, baseAddr - lowestAddr)) {
+                fprintf(stderr, "Failed to process relocations for section %lu\n", i);
+                return false;
+            }
+        }
+    }
+
     return true;
 }
 
@@ -515,7 +530,7 @@ bool MinimalJITLinker::applyRelocation(uint32_t type, char* location,
         *reinterpret_cast<uint32_t*>(location) = instr;
         break;
 
-    case 312: // R_AARCH64_LD64_GOT_LO12_NC (0x117)
+    case 312: // R_AARCH64_LD64_GOT_LO12_NC (0x138)
         // This is similar to ADD_ABS_LO12_NC, but used specifically for loading a GOT entry
         // with a 64-bit load (LD/ST with register offset). The immediate is 12-bit scaled by 8.
         instr = *reinterpret_cast<uint32_t*>(location);
