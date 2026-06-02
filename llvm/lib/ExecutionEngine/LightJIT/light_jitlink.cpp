@@ -74,6 +74,7 @@ struct Elf64_Rela {
 #define SHT_RELA 4
 #define SHT_SYMTAB 2
 #define SHT_STRTAB 3
+#define SHT_NOBITS 8
 #define SHN_UNDEF 0
 
 // 宏用于访问重定位信息
@@ -168,28 +169,28 @@ void MinimalJITLinker::printSectionsInfo(const MinimalELF64Parser& parser) {
 size_t MinimalJITLinker::calculateTotalSize(const MinimalELF64Parser& parser) {
     uint64_t minAddr = UINT64_MAX;
     uint64_t maxAddr = 0;
-    
+
     // 遍历所有节头，直到遇到 nullptr
     for (size_t i = 0; ; i++) {
         auto shdr = parser.getSectionHeader(i);
         if (!shdr) break;
-        
-        // 只考虑需要加载的段（如 PROGBITS）
-        if (shdr->sh_type == 1) {  // SHT_PROGBITS
+
+        // 考虑需要加载的段（PROGBITS 和 NOBITS）
+        if (shdr->sh_type == 1 || shdr->sh_type == 8) {  // SHT_PROGBITS 或 SHT_NOBITS
             if (shdr->sh_size > 0) {
                 uint64_t start = shdr->sh_addr;
                 uint64_t end = shdr->sh_addr + shdr->sh_size;
-                
+
                 if (start < minAddr) minAddr = start;
                 if (end > maxAddr) maxAddr = end;
             }
         }
     }
-    
+
     if (minAddr == UINT64_MAX) {
         return 0;  // 没有需要加载的段
     }
-    
+
     return maxAddr - minAddr;
 }
 
@@ -238,8 +239,12 @@ void MinimalJITLinker::buildSymbolTable(const MinimalELF64Parser& parser) {
                 const char* name = strtab + sym->st_name;
                 uint64_t value = sym->st_value;
 
+                // 包含定义在当前文件中的符号（包括 .bss 节中的符号）
                 if (value != 0 && sym->st_shndx != SHN_UNDEF) {
                     Ctx.SymbolTable[name] = value;
+                    std::cout << "DEBUG: Added symbol to table: " << name
+                              << " = 0x" << std::hex << value << std::dec
+                              << " (section index: " << sym->st_shndx << ")" << std::endl;
                 }
             }
             break;
@@ -257,7 +262,7 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser)
         auto shdr = parser.getSectionHeader(i);
         if (!shdr) break;
 
-        if (shdr->sh_type == 1 && shdr->sh_size > 0) {  // SHT_PROGBITS
+        if ((shdr->sh_type == 1 || shdr->sh_type == 8) && shdr->sh_size > 0) {  // SHT_PROGBITS 或 SHT_NOBITS
             if (shdr->sh_addr < lowestAddr) {
                 lowestAddr = shdr->sh_addr;
             }
@@ -265,7 +270,7 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser)
     }
 
     if (lowestAddr == UINT64_MAX) {
-        fprintf(stderr, "ERROR:No sections to load\n");
+        fprintf(stderr, "ERROR: No sections to load\n");
         return false;
     }
 
@@ -281,20 +286,19 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser)
             uint64_t offset = shdr->sh_addr - lowestAddr;
 
             if (offset + shdr->sh_size > Ctx.CurrentAlloc.Size) {
-                fprintf(stderr, "ERROR:Section exceeds allocated memory: offset=%lu, size=%lu, alloc=%lu\n",
+                fprintf(stderr, "ERROR: Section exceeds allocated memory: offset=%lu, size=%lu, alloc=%lu\n",
                        offset, shdr->sh_size, Ctx.CurrentAlloc.Size);
                 return false;
             }
 
             if (shdr->sh_offset + shdr->sh_size > parser.getSize()) {
-                fprintf(stderr, "ERROR:Section out of bounds in ELF file\n");
+                fprintf(stderr, "ERROR: Section out of bounds in ELF file\n");
                 return false;
             }
 
             char* dst = memory + offset;
 
-            std::cout << "DEBUG: shdr->sh_addr=0x" << std::hex << shdr->sh_addr
-                     << ", lowestAddr=0x" << lowestAddr
+            std::cout << "DEBUG: Copying PROGBITS section at addr=0x" << std::hex << shdr->sh_addr
                      << ", offset=0x" << offset
                      << ", size=" << std::dec << shdr->sh_size
                      << ", dst=0x" << std::hex << (uint64_t)dst << std::endl;
@@ -308,6 +312,33 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser)
         }
     }
 
+    // 初始化所有 NOBITS 段（如 .bss）为 0
+    for (size_t i = 0; ; i++) {
+        auto shdr = parser.getSectionHeader(i);
+        if (!shdr) break;
+
+        if (shdr->sh_type == 8 && shdr->sh_size > 0) { // SHT_NOBITS
+            // 计算内存中的正确偏移
+            uint64_t offset = shdr->sh_addr - lowestAddr;
+
+            if (offset + shdr->sh_size > Ctx.CurrentAlloc.Size) {
+                fprintf(stderr, "ERROR: NOBITS section exceeds allocated memory: offset=%lu, size=%lu, alloc=%lu\n",
+                       offset, shdr->sh_size, Ctx.CurrentAlloc.Size);
+                return false;
+            }
+
+            char* dst = memory + offset;
+
+            std::cout << "DEBUG: Zeroing NOBITS section at addr=0x" << std::hex << shdr->sh_addr
+                     << ", offset=0x" << offset
+                     << ", size=" << std::dec << shdr->sh_size
+                     << ", dst=0x" << std::hex << (uint64_t)dst << std::endl;
+
+            // 将 NOBITS 节的内存清零
+            memset(dst, 0, shdr->sh_size);
+        }
+    }
+
     // 处理重定位节
     for (size_t i = 0; ; i++) {
         auto shdr = parser.getSectionHeader(i);
@@ -316,7 +347,7 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser)
         if (shdr->sh_type == SHT_RELA) {  // 处理重定位节
             std::cout << "Processing relocation section " << i << std::endl;
             if (!processRelocations(parser, shdr, memory, baseAddr - lowestAddr)) {
-                fprintf(stderr, "ERROR:Failed to process relocations for section %lu\n", i);
+                fprintf(stderr, "ERROR: Failed to process relocations for section %lu\n", i);
                 return false;
             }
         }
@@ -698,7 +729,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
     // Find the associated symbol table
     auto symtabShdr = parser.getSectionHeader(relocShdr->sh_link);
     if (!symtabShdr) {
-        fprintf(stderr, "ERROR:No symbol table for relocations\n");
+        fprintf(stderr, "ERROR: No symbol table for relocations\n");
         return false;
     }
 
@@ -707,7 +738,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
     // Find string table
     auto strtabShdr = parser.getSectionHeader(symtabShdr->sh_link);
     if (!strtabShdr) {
-        fprintf(stderr, "ERROR:No string table for symbols\n");
+        fprintf(stderr, "ERROR: No string table for symbols\n");
         return false;
     }
     const char* strtab = parser.getData() + strtabShdr->sh_offset;
@@ -733,7 +764,26 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
             // 计算目标地址
             uint64_t targetAddr = 0;
             if (sym->st_shndx != SHN_UNDEF) {
-                targetAddr = baseAddr + symValue;
+                // 符号定义在当前文件中
+                if (sym->st_shndx < parser.getSize() / sizeof(Elf64_Shdr)) {
+                    auto symSection = parser.getSectionHeader(sym->st_shndx);
+                    if (symSection) {
+                        // 对于 .bss 节（SHT_NOBITS），我们需要计算其地址
+                        if (symSection->sh_type == 8) {  // SHT_NOBITS
+                            // 符号在 .bss 节中的地址 = 基地址 + 符号在节中的偏移
+                            targetAddr = baseAddr + symValue;
+                        } else {
+                            // 其他类型的节
+                            targetAddr = baseAddr + symValue;
+                        }
+                    } else {
+                        fprintf(stderr, "ERROR: Cannot find section for symbol: %s\n", symName);
+                        return false;
+                    }
+                } else {
+                    fprintf(stderr, "ERROR: Invalid section index for symbol: %s\n", symName);
+                    return false;
+                }
             } else {
                 // 查找外部符号
                 auto it = Ctx.SymbolTable.find(symName);
@@ -761,7 +811,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                 char* locPtr = memory + rela->r_offset;
                 if (!applyRelocation(type, locPtr, targetAddr + rela->r_addend,
                                    rela->r_addend, location, rela->r_offset)) {
-                    fprintf(stderr, "ERROR:Failed to apply relocation type %u for symbol %s\n", type, symName);
+                    fprintf(stderr, "ERROR: Failed to apply relocation type %u for symbol %s\n", type, symName);
                     return false;
                 }
             } else {
@@ -780,7 +830,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                 char* locPtr = memory + rela->r_offset;
                 if (!applyRelocation(type, locPtr, pltAddr + rela->r_addend,
                                    rela->r_addend, location, rela->r_offset)) {
-                    fprintf(stderr, "ERROR:Failed to apply PLT relocation type %u for symbol %s\n", type, symName);
+                    fprintf(stderr, "ERROR: Failed to apply PLT relocation type %u for symbol %s\n", type, symName);
                     return false;
                 }
 
@@ -795,14 +845,31 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
         if (type == 311) {  // R_AARCH64_ADR_GOT_PAGE
             // 获取符号的实际地址
             if (sym->st_shndx != SHN_UNDEF) {
-                targetAddr = baseAddr + symValue;
+                // 符号定义在当前文件中
+                if (sym->st_shndx < parser.getSize() / sizeof(Elf64_Shdr)) {
+                    auto symSection = parser.getSectionHeader(sym->st_shndx);
+                    if (symSection) {
+                        // 对于 .bss 节（SHT_NOBITS），我们需要计算其地址
+                        if (symSection->sh_type == 8) {  // SHT_NOBITS
+                            targetAddr = baseAddr + symValue;
+                        } else {
+                            targetAddr = baseAddr + symValue;
+                        }
+                    } else {
+                        fprintf(stderr, "ERROR: Cannot find section for symbol: %s\n", symName);
+                        return false;
+                    }
+                } else {
+                    fprintf(stderr, "ERROR: Invalid section index for symbol: %s\n", symName);
+                    return false;
+                }
             } else {
                 // 查找外部符号
                 auto it = Ctx.SymbolTable.find(symName);
                 if (it != Ctx.SymbolTable.end()) {
                     targetAddr = it->second;
                 } else {
-                    fprintf(stderr, "ERROR:Undefined symbol: %s\n", symName);
+                    fprintf(stderr, "ERROR: Undefined symbol: %s\n", symName);
                     return false;
                 }
             }
@@ -812,7 +879,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
             // 获取或创建 GOT 条目
             gotAddr = getGOTEntryForSymbol(symName, targetAddr);
             if (gotAddr == 0) {
-                fprintf(stderr, "ERROR:Failed to get GOT entry for symbol: %s\n", symName);
+                fprintf(stderr, "ERROR: Failed to get GOT entry for symbol: %s\n", symName);
                 return false;
             }
 
@@ -825,14 +892,31 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
         else if (type == 312) {  // R_AARCH64_LD64_GOT_LO12_NC
             // 获取符号的实际地址
             if (sym->st_shndx != SHN_UNDEF) {
-                targetAddr = baseAddr + symValue;
+                // 符号定义在当前文件中
+                if (sym->st_shndx < parser.getSize() / sizeof(Elf64_Shdr)) {
+                    auto symSection = parser.getSectionHeader(sym->st_shndx);
+                    if (symSection) {
+                        // 对于 .bss 节（SHT_NOBITS），我们需要计算其地址
+                        if (symSection->sh_type == 8) {  // SHT_NOBITS
+                            targetAddr = baseAddr + symValue;
+                        } else {
+                            targetAddr = baseAddr + symValue;
+                        }
+                    } else {
+                        fprintf(stderr, "ERROR: Cannot find section for symbol: %s\n", symName);
+                        return false;
+                    }
+                } else {
+                    fprintf(stderr, "ERROR: Invalid section index for symbol: %s\n", symName);
+                    return false;
+                }
             } else {
                 // 查找外部符号
                 auto it = Ctx.SymbolTable.find(symName);
                 if (it != Ctx.SymbolTable.end()) {
                     targetAddr = it->second;
                 } else {
-                    fprintf(stderr, "ERROR:Undefined symbol: %s\n", symName);
+                    fprintf(stderr, "ERROR: Undefined symbol: %s\n", symName);
                     return false;
                 }
             }
@@ -842,7 +926,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
             // 获取或创建 GOT 条目
             gotAddr = getGOTEntryForSymbol(symName, targetAddr);
             if (gotAddr == 0) {
-                fprintf(stderr, "ERROR:Failed to get GOT entry for symbol: %s\n", symName);
+                fprintf(stderr, "ERROR: Failed to get GOT entry for symbol: %s\n", symName);
                 return false;
             }
 
@@ -850,6 +934,39 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
             targetAddr = gotAddr;
             std::cout << "DEBUG: R_AARCH64_LD64_GOT_LO12_NC for symbol: " << symName
                       << ", GOT addr=0x" << std::hex << gotAddr << std::dec << std::endl;
+        }
+        // 处理其他重定位类型
+        else if (type == 277 || type == 275) {  // R_AARCH64_ADD_ABS_LO12_NC 或 R_AARCH64_ADR_PREL_PG_HI21
+            // 符号定义在当前文件中
+            if (sym->st_shndx != SHN_UNDEF) {
+                // 符号定义在当前文件中
+                if (sym->st_shndx < parser.getSize() / sizeof(Elf64_Shdr)) {
+                    auto symSection = parser.getSectionHeader(sym->st_shndx);
+                    if (symSection) {
+                        // 对于 .bss 节（SHT_NOBITS），我们需要计算其地址
+                        if (symSection->sh_type == 8) {  // SHT_NOBITS
+                            targetAddr = baseAddr + symValue;
+                        } else {
+                            targetAddr = baseAddr + symValue;
+                        }
+                    } else {
+                        fprintf(stderr, "ERROR: Cannot find section for symbol: %s\n", symName);
+                        return false;
+                    }
+                } else {
+                    fprintf(stderr, "ERROR: Invalid section index for symbol: %s\n", symName);
+                    return false;
+                }
+            } else {
+                // 查找外部符号
+                auto it = Ctx.SymbolTable.find(symName);
+                if (it != Ctx.SymbolTable.end()) {
+                    targetAddr = it->second;
+                } else {
+                    fprintf(stderr, "ERROR: Undefined symbol: %s\n", symName);
+                    return false;
+                }
+            }
         }
         else if (!usePLT) {
             // Normal symbol resolution
@@ -860,7 +977,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                 if (it != Ctx.SymbolTable.end()) {
                     targetAddr = it->second;
                 } else {
-                    fprintf(stderr, "ERROR:Undefined symbol: %s\n", symName);
+                    fprintf(stderr, "ERROR: Undefined symbol: %s\n", symName);
                     return false;
                 }
             }
@@ -872,7 +989,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
 
         if (!applyRelocation(type, locPtr, targetAddr + rela->r_addend,
                            rela->r_addend, location, rela->r_offset)) {
-            fprintf(stderr, "ERROR:Failed to apply relocation type %u for symbol %s\n", type, symName);
+            fprintf(stderr, "ERROR: Failed to apply relocation type %u for symbol %s\n", type, symName);
             return false;
         }
     }
