@@ -450,42 +450,43 @@ bool MinimalJITLinker::setupPLTAndGOT() {
         uint32_t imm = pageShifted & 0x1FFFFF;
 
         // 1. adrp x16, [page address of GOT entry]
-        // adrp 指令编码: 1|immhi(19 bits)|1|Rd(5 bits)|immlo(2 bits)
+        // 正确编码：0x90 0000 00 | immhi:immlo:Rd
         uint32_t adrpInstr = 0x90000000;  // adrp 指令基
-        adrpInstr |= ((imm >> 2) & 0x7FFFF) << 5;  // immhi
-        adrpInstr |= (imm & 0x3) << 29;           // immlo
-        adrpInstr |= 16;  // 目标寄存器 x16
+        adrpInstr |= ((imm >> 2) & 0x7FFFF) << 5;  // immhi[18:2] 放在 bits[23:5]
+        adrpInstr |= (imm & 0x3) << 29;           // immlo[1:0] 放在 bits[30:29]
+        adrpInstr |= 16;  // 目标寄存器 x16 (寄存器号放在 bits[4:0])
 
         // 2. ldr x16, [x16, #offset within page]
-        // ldr 指令编码: 1|1|1|0|0|0|0|1|0|1|imm12(12 bits)|Rn(5 bits)|Rt(5 bits)
+        // 计算页内偏移，确保是8的倍数（64位加载）
         uint32_t offsetInPage = gotEntryAddr & 0xFFF;
+        if (offsetInPage % 8 != 0) {
+            std::cerr << "ERROR: GOT entry address not 8-byte aligned: 0x"
+                      << std::hex << gotEntryAddr << std::dec << std::endl;
+            return false;
+        }
+
+        // ldr 指令编码：F9 40 00 00 | imm12:Rn:Rt
+        // imm12 = offsetInPage >> 3 (因为64位加载，偏移是8字节倍数)
         uint32_t ldrInstr = 0xF9400000;  // ldr x16, [x16, #offset]
-        ldrInstr |= (offsetInPage >> 3) << 10;  // 偏移，右移3位（64位加载）
-        ldrInstr |= 16 << 5;  // Rn = x16
-        ldrInstr |= 16;       // Rt = x16
+        ldrInstr |= ((offsetInPage >> 3) & 0xFFF) << 10;  // imm12 放在 bits[21:10]
+        ldrInstr |= 16 << 5;  // Rn = x16 (放在 bits[9:5])
+        ldrInstr |= 16;       // Rt = x16 (放在 bits[4:0])
 
         // 3. br x16
-        // br 指令编码: 1101011000011111000000|Rn(5 bits)|00000
+        // br 指令编码：D6 1F 00 00 | Rn:00000
         uint32_t brInstr = 0xD61F0000;  // br x16
-        brInstr |= 16 << 5;  // Rn = x16
+        brInstr |= 16 << 5;  // Rn = x16 (放在 bits[9:5])
 
         entry->instr0 = adrpInstr;
         entry->instr1 = ldrInstr;
-        // 如果需要16字节PLT条目，这里应该还有第三个字
-        // entry->instr2 = brInstr;
-
-        // 但根据当前结构，我们只有2个32位字，所以将br指令合并
-        // 简化：只使用前两条指令，假设跳转已经在加载后隐式进行
-        // 实际上，ldr 后需要 br 指令，但我们可以调整结构
+        entry->instr2 = brInstr;
+        entry->padding = 0;  // 填充为0，使结构为16字节对齐
 
         // 将 PLT 条目写入内存
         char* pltLocation = Ctx.CurrentAlloc.Memory +
                            (Ctx.PLTBaseAddr - Ctx.CurrentAlloc.BaseAddress) +
                            (i * sizeof(AArch64PLTEntry));
         *reinterpret_cast<AArch64PLTEntry*>(pltLocation) = *entry;
-
-        // 在 PLT 条目后写入 br 指令
-        *reinterpret_cast<uint32_t*>(pltLocation + 8) = brInstr;
     }
 
     // 初始化 GOT 条目为 0
@@ -562,21 +563,35 @@ uint64_t MinimalJITLinker::getPLTEntryForSymbol(const std::string& symbolName) {
     // 在映射中记录符号
     Ctx.PLTSymbolMap[symbolName] = slotIndex;
 
-    // 设置 GOT 条目
-    uint64_t* gotEntries = reinterpret_cast<uint64_t*>(Ctx.GOTPtr);
+    // 获取符号地址
+    uint64_t symAddr = 0;
     auto symIt = Ctx.SymbolTable.find(symbolName);
     if (symIt != Ctx.SymbolTable.end()) {
-        // 如果符号已经在符号表中，直接设置 GOT 条目
-        gotEntries[slotIndex] = symIt->second;
+        // 如果符号已经在符号表中，获取其地址
+        symAddr = symIt->second;
     } else {
         // 否则，设置为 0，稍后解析
-        gotEntries[slotIndex] = 0;
+        symAddr = 0;
     }
+
+    // 获取或创建 GOT 条目
+    // 重要：调用 getGOTEntryForSymbol 来确保有对应的 GOT 条目
+    uint64_t gotAddr = getGOTEntryForSymbol(symbolName, symAddr);
+    if (gotAddr == 0) {
+        std::cerr << "ERROR: Failed to get GOT entry for symbol: "
+                  << symbolName << std::endl;
+        return 0;
+    }
+
+    // 注意：我们已经通过 getGOTEntryForSymbol 设置了 GOT 条目
+    // 不需要再单独设置 GOT 条目
 
     uint64_t pltAddr = Ctx.PLTBaseAddr + (slotIndex * 16);
     std::cout << "DEBUG: Allocated PLT entry for symbol: " << symbolName
               << " at 0x" << std::hex << pltAddr << std::dec
-              << " (slot " << slotIndex << ")" << std::endl;
+              << " (slot " << slotIndex << ")"
+              << ", GOT entry at 0x" << std::hex << gotAddr << std::dec
+              << std::endl;
 
     return pltAddr;
 }
