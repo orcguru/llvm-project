@@ -265,7 +265,7 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser)
     }
 
     if (lowestAddr == UINT64_MAX) {
-        fprintf(stderr, "No sections to load\n");
+        fprintf(stderr, "ERROR:No sections to load\n");
         return false;
     }
 
@@ -281,13 +281,13 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser)
             uint64_t offset = shdr->sh_addr - lowestAddr;
 
             if (offset + shdr->sh_size > Ctx.CurrentAlloc.Size) {
-                fprintf(stderr, "Section exceeds allocated memory: offset=%lu, size=%lu, alloc=%lu\n",
+                fprintf(stderr, "ERROR:Section exceeds allocated memory: offset=%lu, size=%lu, alloc=%lu\n",
                        offset, shdr->sh_size, Ctx.CurrentAlloc.Size);
                 return false;
             }
 
             if (shdr->sh_offset + shdr->sh_size > parser.getSize()) {
-                fprintf(stderr, "Section out of bounds in ELF file\n");
+                fprintf(stderr, "ERROR:Section out of bounds in ELF file\n");
                 return false;
             }
 
@@ -316,7 +316,7 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser)
         if (shdr->sh_type == SHT_RELA) {  // 处理重定位节
             std::cout << "Processing relocation section " << i << std::endl;
             if (!processRelocations(parser, shdr, memory, baseAddr - lowestAddr)) {
-                fprintf(stderr, "Failed to process relocations for section %lu\n", i);
+                fprintf(stderr, "ERROR:Failed to process relocations for section %lu\n", i);
                 return false;
             }
         }
@@ -627,7 +627,7 @@ bool MinimalJITLinker::applyRelocation(uint32_t type, char* location,
         // 检查页偏移是否在 21 位有符号范围内 [-2^20, 2^20-1]
         if (page_shifted < -((1LL) << 20) || page_shifted >= ((1LL) << 20)) {
             fprintf(stderr, 
-                "Relocation R_AARCH64_ADR_PREL_PG_HI21/R_AARCH64_ADR_GOT_PAGE out of range: "
+                "ERROR:Relocation R_AARCH64_ADR_PREL_PG_HI21/R_AARCH64_ADR_GOT_PAGE out of range: "
                 "byte_offset=0x%lx, page_offset=0x%lx pages, "
                 "relocOffset=0x%lx, value=0x%lx, relocAddr=0x%lx\n",
                 page_offset, page_shifted, relocOffset, value, relocAddr);
@@ -667,7 +667,7 @@ bool MinimalJITLinker::applyRelocation(uint32_t type, char* location,
             // We need to know which symbol this is for
             // Since we don't have the symbol name here, we'll need to modify
             // the caller to pass it. For now, we'll assume it's handled elsewhere
-            fprintf(stderr, "R_AARCH64_JUMP26/CALL26 relocation out of range: offset=0x%lx\n", branch_offset);
+            fprintf(stderr, "ERROR:R_AARCH64_JUMP26/CALL26 relocation out of range: offset=0x%lx\n", branch_offset);
             fprintf(stderr, "  Target=0x%lx, Relocation=0x%lx, Distance=0x%lx\n", 
                    value, relocAddr, static_cast<uint64_t>(llabs(branch_offset)));
             fprintf(stderr, "  PLT support not fully implemented in this version\n");
@@ -682,7 +682,7 @@ bool MinimalJITLinker::applyRelocation(uint32_t type, char* location,
         break;
 
     default:
-        fprintf(stderr, "Unsupported relocation type: %u (0x%x)\n", type, type);
+        fprintf(stderr, "ERROR:Unsupported relocation type: %u (0x%x)\n", type, type);
         return false;
     }
     return true;
@@ -698,7 +698,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
     // Find the associated symbol table
     auto symtabShdr = parser.getSectionHeader(relocShdr->sh_link);
     if (!symtabShdr) {
-        fprintf(stderr, "No symbol table for relocations\n");
+        fprintf(stderr, "ERROR:No symbol table for relocations\n");
         return false;
     }
 
@@ -707,7 +707,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
     // Find string table
     auto strtabShdr = parser.getSectionHeader(symtabShdr->sh_link);
     if (!strtabShdr) {
-        fprintf(stderr, "No string table for symbols\n");
+        fprintf(stderr, "ERROR:No string table for symbols\n");
         return false;
     }
     const char* strtab = parser.getData() + strtabShdr->sh_offset;
@@ -761,7 +761,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                 char* locPtr = memory + rela->r_offset;
                 if (!applyRelocation(type, locPtr, targetAddr + rela->r_addend,
                                    rela->r_addend, location, rela->r_offset)) {
-                    fprintf(stderr, "Failed to apply relocation type %u for symbol %s\n", type, symName);
+                    fprintf(stderr, "ERROR:Failed to apply relocation type %u for symbol %s\n", type, symName);
                     return false;
                 }
             } else {
@@ -780,7 +780,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                 char* locPtr = memory + rela->r_offset;
                 if (!applyRelocation(type, locPtr, pltAddr + rela->r_addend,
                                    rela->r_addend, location, rela->r_offset)) {
-                    fprintf(stderr, "Failed to apply PLT relocation type %u for symbol %s\n", type, symName);
+                    fprintf(stderr, "ERROR:Failed to apply PLT relocation type %u for symbol %s\n", type, symName);
                     return false;
                 }
 
@@ -802,7 +802,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                 if (it != Ctx.SymbolTable.end()) {
                     targetAddr = it->second;
                 } else {
-                    fprintf(stderr, "Undefined symbol: %s\n", symName);
+                    fprintf(stderr, "ERROR:Undefined symbol: %s\n", symName);
                     return false;
                 }
             }
@@ -812,7 +812,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
             // 获取或创建 GOT 条目
             gotAddr = getGOTEntryForSymbol(symName, targetAddr);
             if (gotAddr == 0) {
-                fprintf(stderr, "Failed to get GOT entry for symbol: %s\n", symName);
+                fprintf(stderr, "ERROR:Failed to get GOT entry for symbol: %s\n", symName);
                 return false;
             }
 
@@ -832,7 +832,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                 if (it != Ctx.SymbolTable.end()) {
                     targetAddr = it->second;
                 } else {
-                    fprintf(stderr, "Undefined symbol: %s\n", symName);
+                    fprintf(stderr, "ERROR:Undefined symbol: %s\n", symName);
                     return false;
                 }
             }
@@ -842,7 +842,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
             // 获取或创建 GOT 条目
             gotAddr = getGOTEntryForSymbol(symName, targetAddr);
             if (gotAddr == 0) {
-                fprintf(stderr, "Failed to get GOT entry for symbol: %s\n", symName);
+                fprintf(stderr, "ERROR:Failed to get GOT entry for symbol: %s\n", symName);
                 return false;
             }
 
@@ -860,7 +860,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                 if (it != Ctx.SymbolTable.end()) {
                     targetAddr = it->second;
                 } else {
-                    fprintf(stderr, "Undefined symbol: %s\n", symName);
+                    fprintf(stderr, "ERROR:Undefined symbol: %s\n", symName);
                     return false;
                 }
             }
@@ -872,7 +872,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
 
         if (!applyRelocation(type, locPtr, targetAddr + rela->r_addend,
                            rela->r_addend, location, rela->r_offset)) {
-            fprintf(stderr, "Failed to apply relocation type %u for symbol %s\n", type, symName);
+            fprintf(stderr, "ERROR:Failed to apply relocation type %u for symbol %s\n", type, symName);
             return false;
         }
     }
@@ -883,7 +883,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
 bool MinimalJITLinker::link(const char* objectData, size_t objectSize, uint64_t baseAddress) {
     MinimalELF64Parser parser(objectData, objectSize);
     if (!parser.isValid()) {
-        fprintf(stderr, "Invalid ELF file\n");
+        fprintf(stderr, "ERROR:Invalid ELF file\n");
         return false;
     }
 
@@ -893,7 +893,7 @@ bool MinimalJITLinker::link(const char* objectData, size_t objectSize, uint64_t 
     // 1. 计算总大小
     size_t totalSize = calculateTotalSize(parser);
     if (totalSize == 0) {
-        fprintf(stderr, "Failed to calculate total size\n");
+        fprintf(stderr, "ERROR:Failed to calculate total size\n");
         return false;
     }
 
@@ -902,13 +902,13 @@ bool MinimalJITLinker::link(const char* objectData, size_t objectSize, uint64_t 
 
     // 2. 分配内存
     if (!allocateMemory(totalSize, baseAddress)) {
-        fprintf(stderr, "Failed to allocate memory\n");
+        fprintf(stderr, "ERROR:Failed to allocate memory\n");
         return false;
     }
 
     // 3. 设置 PLT 和 GOT
     if (!setupPLTAndGOT()) {
-        fprintf(stderr, "Failed to set up PLT and GOT\n");
+        fprintf(stderr, "ERROR:Failed to set up PLT and GOT\n");
         return false;
     }
 
@@ -917,7 +917,7 @@ bool MinimalJITLinker::link(const char* objectData, size_t objectSize, uint64_t 
 
     // 5. 复制节并处理重定位
     if (!copySectionsAndRelocate(parser)) {
-        fprintf(stderr, "Failed to copy sections and relocate\n");
+        fprintf(stderr, "ERROR:Failed to copy sections and relocate\n");
         return false;
     }
 

@@ -101,7 +101,7 @@ uint64_t jit_link_aot_with_helpers(jit_context_t* ctx,
             }
             fclose(f);
         } else {
-            fprintf(stderr, "Warning: Could not open helper file: %s\n", helper_file);
+            fprintf(stderr, "ERROR: Could not open helper file: %s\n", helper_file);
         }
     }
 
