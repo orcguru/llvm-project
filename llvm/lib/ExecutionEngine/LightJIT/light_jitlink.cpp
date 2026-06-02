@@ -770,8 +770,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                     // 对于 .bss 节（SHT_NOBITS），我们需要计算其地址
                     if (symSection->sh_type == 8) {  // SHT_NOBITS
                         // 符号在 .bss 节中的地址 = .bss 节的起始地址 + 符号在节中的偏移
-                        // 首先计算 .bss 节的起始地址
-                        // 注意：baseAddr 是重定位基地址，需要加上 .bss 节的虚拟地址
+                        // 注意：baseAddr 是重定位基地址
                         targetAddr = baseAddr + symSection->sh_addr + symValue;
                         std::cout << "DEBUG: .bss symbol " << symName << ": "
                                   << "section_addr=0x" << std::hex << symSection->sh_addr
@@ -810,7 +809,8 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
             if (branch_offset >= -(1 << 27) && branch_offset < (1 << 27)) {
                 // 在范围内，直接应用重定位
                 char* locPtr = memory + rela->r_offset;
-                if (!applyRelocation(type, locPtr, targetAddr + rela->r_addend,
+                // 修复：传递 targetAddr 而不是 targetAddr + rela->r_addend
+                if (!applyRelocation(type, locPtr, targetAddr,
                                    rela->r_addend, location, rela->r_offset)) {
                     fprintf(stderr, "ERROR: Failed to apply relocation type %u for symbol %s\n", type, symName);
                     return false;
@@ -829,7 +829,8 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
 
                 // 应用重定位到 PLT 条目
                 char* locPtr = memory + rela->r_offset;
-                if (!applyRelocation(type, locPtr, pltAddr + rela->r_addend,
+                // 修复：传递 pltAddr 而不是 pltAddr + rela->r_addend
+                if (!applyRelocation(type, locPtr, pltAddr,
                                    rela->r_addend, location, rela->r_offset)) {
                     fprintf(stderr, "ERROR: Failed to apply PLT relocation type %u for symbol %s\n", type, symName);
                     return false;
@@ -889,7 +890,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
             std::cout << "DEBUG: R_AARCH64_ADR_GOT_PAGE for symbol: " << symName
                       << ", GOT addr=0x" << std::hex << gotAddr << std::dec << std::endl;
         }
-        // 处理 R_AARCH64_LD64_GOT_LO12_NC
+        // 处理 R_AARCH64LD64_GOT_LO12_NC
         else if (type == 312) {  // R_AARCH64_LD64_GOT_LO12_NC
             // 获取符号的实际地址
             if (sym->st_shndx != SHN_UNDEF) {
@@ -949,7 +950,8 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                         std::cout << "DEBUG: .bss symbol " << symName << ": "
                                   << "section_addr=0x" << std::hex << symSection->sh_addr
                                   << ", offset=0x" << symValue
-                                  << ", target=0x" << targetAddr << std::dec << std::endl;
+                                  << ", target=0x" << targetAddr
+                                  << ", rela->r_addend=0x" << rela->r_addend << std::dec << std::endl;
                     } else {
                         targetAddr = baseAddr + symValue;
                     }
@@ -1003,7 +1005,8 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
         uint64_t location = baseAddr + rela->r_offset;
         char* locPtr = memory + rela->r_offset;
 
-        if (!applyRelocation(type, locPtr, targetAddr + rela->r_addend,
+        // 修复：传递 targetAddr 而不是 targetAddr + rela->r_addend
+        if (!applyRelocation(type, locPtr, targetAddr,
                            rela->r_addend, location, rela->r_offset)) {
             fprintf(stderr, "ERROR: Failed to apply relocation type %u for symbol %s\n", type, symName);
             return false;
