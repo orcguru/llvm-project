@@ -8,10 +8,12 @@
 #include <vector>
 #include <cstdio>
 
-// PLT 条目结构
+// 更新 PLT 条目结构为3条指令
 struct AArch64PLTEntry {
-    uint32_t instr0;  // ldr x16, [x16, #offset]  (loading from GOT.PLT)
-    uint32_t instr1;  // br x16                   (jump to target)
+    uint32_t instr0;  // adrp x16, [GOT entry page]
+    uint32_t instr1;  // ldr  x16, [x16, #offset in page]
+    uint32_t instr2;  // br   x16
+    uint32_t padding; // 填充，使结构为16字节对齐
 };
 
 // 简化的链接上下文

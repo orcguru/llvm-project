@@ -296,7 +296,8 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser)
             std::cout << "DEBUG: shdr->sh_addr=0x" << std::hex << shdr->sh_addr
                      << ", lowestAddr=0x" << lowestAddr
                      << ", offset=0x" << offset
-                     << ", size=" << std::dec << shdr->sh_size << std::endl;
+                     << ", size=" << std::dec << shdr->sh_size
+                     << ", dst=0x" << std::hex << (uint64_t)dst << std::endl;
 
             memcpy(dst, src, shdr->sh_size);
 
@@ -364,13 +365,12 @@ bool MinimalJITLinker::setupPLTAndGOT() {
     }
 
     // 计算 PLT 和 GOT 所需大小
-    // 初始分配 16 个 PLT 条目，每个条目 2 条指令（8 字节）
-    // 实际上 AArch64 PLT 条目通常是 16 字节，但为了简化我们先使用 8 字节
+    // 每个 PLT 条目 16 字节（4条指令）
     size_t pltEntryCount = 2048;
     size_t gotEntryCount = 2048;
 
-    size_t pltSize = pltEntryCount * 8;  // 每个 PLT 条目 8 字节
-    size_t gotSize = gotEntryCount * 8;  // 每个 GOT 条目 8 字节
+    size_t pltSize = pltEntryCount * 16;  // 每个 PLT 条目 16 字节
+    size_t gotSize = gotEntryCount * 8;   // 每个 GOT 条目 8 字节
 
     std::cout << "DEBUG: Setting up PLT and GOT" << std::endl;
     std::cout << "  PLT entries: " << std::dec << pltEntryCount << ", size: " << pltSize << " bytes" << std::endl;
@@ -431,21 +431,61 @@ bool MinimalJITLinker::setupPLTAndGOT() {
     for (size_t i = 0; i < pltEntryCount; i++) {
         AArch64PLTEntry* entry = &Ctx.PLTEntries[i];
 
-        // 简单的 PLT 桩代码：
-        // 1. 从 GOT 加载目标地址到 x16
-        // 2. 跳转到 x16
-        // 注意：这里需要正确的 AArch64 指令编码
+        // 获取 GOT 条目地址
+        uint64_t gotEntryAddr = Ctx.GOTBaseAddr + (i * 8);
 
-        // 简化：我们暂时不生成实际的指令，只是设置占位符
-        // 实际实现中需要正确的 AArch64 指令编码
-        entry->instr0 = 0x58000000;  // 占位符
-        entry->instr1 = 0x58000000;  // 占位符
+        // 计算 GOT 条目相对于 PLT 条目的页偏移
+        uint64_t pltEntryAddr = Ctx.PLTBaseAddr + (i * sizeof(AArch64PLTEntry));
+        int64_t pageOffset = ((gotEntryAddr & ~0xFFFULL) - (pltEntryAddr & ~0xFFFULL));
+        int64_t pageShifted = pageOffset >> 12;
+
+        // 检查偏移是否在范围内
+        if (pageShifted < -((1LL) << 20) || pageShifted >= ((1LL) << 20)) {
+            std::cerr << "ERROR: GOT entry too far from PLT entry: "
+                      << pageShifted << " pages" << std::endl;
+            return false;
+        }
+
+        // 编码指令
+        uint32_t imm = pageShifted & 0x1FFFFF;
+
+        // 1. adrp x16, [page address of GOT entry]
+        // adrp 指令编码: 1|immhi(19 bits)|1|Rd(5 bits)|immlo(2 bits)
+        uint32_t adrpInstr = 0x90000000;  // adrp 指令基
+        adrpInstr |= ((imm >> 2) & 0x7FFFF) << 5;  // immhi
+        adrpInstr |= (imm & 0x3) << 29;           // immlo
+        adrpInstr |= 16;  // 目标寄存器 x16
+
+        // 2. ldr x16, [x16, #offset within page]
+        // ldr 指令编码: 1|1|1|0|0|0|0|1|0|1|imm12(12 bits)|Rn(5 bits)|Rt(5 bits)
+        uint32_t offsetInPage = gotEntryAddr & 0xFFF;
+        uint32_t ldrInstr = 0xF9400000;  // ldr x16, [x16, #offset]
+        ldrInstr |= (offsetInPage >> 3) << 10;  // 偏移，右移3位（64位加载）
+        ldrInstr |= 16 << 5;  // Rn = x16
+        ldrInstr |= 16;       // Rt = x16
+
+        // 3. br x16
+        // br 指令编码: 1101011000011111000000|Rn(5 bits)|00000
+        uint32_t brInstr = 0xD61F0000;  // br x16
+        brInstr |= 16 << 5;  // Rn = x16
+
+        entry->instr0 = adrpInstr;
+        entry->instr1 = ldrInstr;
+        // 如果需要16字节PLT条目，这里应该还有第三个字
+        // entry->instr2 = brInstr;
+
+        // 但根据当前结构，我们只有2个32位字，所以将br指令合并
+        // 简化：只使用前两条指令，假设跳转已经在加载后隐式进行
+        // 实际上，ldr 后需要 br 指令，但我们可以调整结构
 
         // 将 PLT 条目写入内存
         char* pltLocation = Ctx.CurrentAlloc.Memory +
                            (Ctx.PLTBaseAddr - Ctx.CurrentAlloc.BaseAddress) +
-                           (i * 8);
+                           (i * sizeof(AArch64PLTEntry));
         *reinterpret_cast<AArch64PLTEntry*>(pltLocation) = *entry;
+
+        // 在 PLT 条目后写入 br 指令
+        *reinterpret_cast<uint32_t*>(pltLocation + 8) = brInstr;
     }
 
     // 初始化 GOT 条目为 0
@@ -461,7 +501,6 @@ bool MinimalJITLinker::setupPLTAndGOT() {
     return true;
 }
 
-// 实现
 uint64_t MinimalJITLinker::getGOTEntryForSymbol(const std::string& symbolName, uint64_t targetAddr) {
     // 检查是否已经有这个符号的 GOT 条目
     auto it = Ctx.GotSymbolMap.find(symbolName);
@@ -476,8 +515,10 @@ uint64_t MinimalJITLinker::getGOTEntryForSymbol(const std::string& symbolName, u
     // 分配新的 GOT 槽位
     size_t slotIndex = Ctx.NextGOTIndex;
 
-    // 检查 GOT 是否已满
-    size_t gotEntryCount = 16;  // 与 setupPLTAndGOT 中一致
+    // 计算 GOT 条目数
+    size_t gotSize = 2048 * 8;  // 假设与 setupPLTAndGOT 一致
+    size_t gotEntryCount = gotSize / 8;
+
     if (slotIndex >= gotEntryCount) {
         std::cerr << "ERROR: GOT table full, cannot allocate entry for symbol: "
                   << symbolName << std::endl;
@@ -507,7 +548,7 @@ uint64_t MinimalJITLinker::getPLTEntryForSymbol(const std::string& symbolName) {
     // 检查是否已经有这个符号的 PLT 条目
     auto it = Ctx.PLTSymbolMap.find(symbolName);
     if (it != Ctx.PLTSymbolMap.end()) {
-        return Ctx.PLTBaseAddr + (it->second * 8);  // 每个条目 8 字节
+        return Ctx.PLTBaseAddr + (it->second * 16);  // 每个条目 16 字节
     }
 
     // 分配新的 PLT 槽位
@@ -532,7 +573,7 @@ uint64_t MinimalJITLinker::getPLTEntryForSymbol(const std::string& symbolName) {
         gotEntries[slotIndex] = 0;
     }
 
-    uint64_t pltAddr = Ctx.PLTBaseAddr + (slotIndex * 8);
+    uint64_t pltAddr = Ctx.PLTBaseAddr + (slotIndex * 16);
     std::cout << "DEBUG: Allocated PLT entry for symbol: " << symbolName
               << " at 0x" << std::hex << pltAddr << std::dec
               << " (slot " << slotIndex << ")" << std::endl;
