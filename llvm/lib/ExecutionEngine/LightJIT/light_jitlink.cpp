@@ -765,23 +765,24 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
             uint64_t targetAddr = 0;
             if (sym->st_shndx != SHN_UNDEF) {
                 // 符号定义在当前文件中
-                if (sym->st_shndx < parser.getSize() / sizeof(Elf64_Shdr)) {
-                    auto symSection = parser.getSectionHeader(sym->st_shndx);
-                    if (symSection) {
-                        // 对于 .bss 节（SHT_NOBITS），我们需要计算其地址
-                        if (symSection->sh_type == 8) {  // SHT_NOBITS
-                            // 符号在 .bss 节中的地址 = 基地址 + 符号在节中的偏移
-                            targetAddr = baseAddr + symValue;
-                        } else {
-                            // 其他类型的节
-                            targetAddr = baseAddr + symValue;
-                        }
+                auto symSection = parser.getSectionHeader(sym->st_shndx);
+                if (symSection) {
+                    // 对于 .bss 节（SHT_NOBITS），我们需要计算其地址
+                    if (symSection->sh_type == 8) {  // SHT_NOBITS
+                        // 符号在 .bss 节中的地址 = .bss 节的起始地址 + 符号在节中的偏移
+                        // 首先计算 .bss 节的起始地址
+                        // 注意：baseAddr 是重定位基地址，需要加上 .bss 节的虚拟地址
+                        targetAddr = baseAddr + symSection->sh_addr + symValue;
+                        std::cout << "DEBUG: .bss symbol " << symName << ": "
+                                  << "section_addr=0x" << std::hex << symSection->sh_addr
+                                  << ", offset=0x" << symValue
+                                  << ", target=0x" << targetAddr << std::dec << std::endl;
                     } else {
-                        fprintf(stderr, "ERROR: Cannot find section for symbol: %s\n", symName);
-                        return false;
+                        // 其他类型的节
+                        targetAddr = baseAddr + symValue;
                     }
                 } else {
-                    fprintf(stderr, "ERROR: Invalid section index for symbol: %s\n", symName);
+                    fprintf(stderr, "ERROR: Cannot find section for symbol: %s\n", symName);
                     return false;
                 }
             } else {
@@ -846,21 +847,21 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
             // 获取符号的实际地址
             if (sym->st_shndx != SHN_UNDEF) {
                 // 符号定义在当前文件中
-                if (sym->st_shndx < parser.getSize() / sizeof(Elf64_Shdr)) {
-                    auto symSection = parser.getSectionHeader(sym->st_shndx);
-                    if (symSection) {
-                        // 对于 .bss 节（SHT_NOBITS），我们需要计算其地址
-                        if (symSection->sh_type == 8) {  // SHT_NOBITS
-                            targetAddr = baseAddr + symValue;
-                        } else {
-                            targetAddr = baseAddr + symValue;
-                        }
+                auto symSection = parser.getSectionHeader(sym->st_shndx);
+                if (symSection) {
+                    // 对于 .bss 节（SHT_NOBITS），我们需要计算其地址
+                    if (symSection->sh_type == 8) {  // SHT_NOBITS
+                        // 符号在 .bss 节中的地址 = .bss 节的起始地址 + 符号在节中的偏移
+                        targetAddr = baseAddr + symSection->sh_addr + symValue;
+                        std::cout << "DEBUG: .bss symbol " << symName << ": "
+                                  << "section_addr=0x" << std::hex << symSection->sh_addr
+                                  << ", offset=0x" << symValue
+                                  << ", target=0x" << targetAddr << std::dec << std::endl;
                     } else {
-                        fprintf(stderr, "ERROR: Cannot find section for symbol: %s\n", symName);
-                        return false;
+                        targetAddr = baseAddr + symValue;
                     }
                 } else {
-                    fprintf(stderr, "ERROR: Invalid section index for symbol: %s\n", symName);
+                    fprintf(stderr, "ERROR: Cannot find section for symbol: %s\n", symName);
                     return false;
                 }
             } else {
@@ -893,21 +894,21 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
             // 获取符号的实际地址
             if (sym->st_shndx != SHN_UNDEF) {
                 // 符号定义在当前文件中
-                if (sym->st_shndx < parser.getSize() / sizeof(Elf64_Shdr)) {
-                    auto symSection = parser.getSectionHeader(sym->st_shndx);
-                    if (symSection) {
-                        // 对于 .bss 节（SHT_NOBITS），我们需要计算其地址
-                        if (symSection->sh_type == 8) {  // SHT_NOBITS
-                            targetAddr = baseAddr + symValue;
-                        } else {
-                            targetAddr = baseAddr + symValue;
-                        }
+                auto symSection = parser.getSectionHeader(sym->st_shndx);
+                if (symSection) {
+                    // 对于 .bss 节（SHT_NOBITS），我们需要计算其地址
+                    if (symSection->sh_type == 8) {  // SHT_NOBITS
+                        // 符号在 .bss 节中的地址 = .bss 节的起始地址 + 符号在节中的偏移
+                        targetAddr = baseAddr + symSection->sh_addr + symValue;
+                        std::cout << "DEBUG: .bss symbol " << symName << ": "
+                                  << "section_addr=0x" << std::hex << symSection->sh_addr
+                                  << ", offset=0x" << symValue
+                                  << ", target=0x" << targetAddr << std::dec << std::endl;
                     } else {
-                        fprintf(stderr, "ERROR: Cannot find section for symbol: %s\n", symName);
-                        return false;
+                        targetAddr = baseAddr + symValue;
                     }
                 } else {
-                    fprintf(stderr, "ERROR: Invalid section index for symbol: %s\n", symName);
+                    fprintf(stderr, "ERROR: Cannot find section for symbol: %s\n", symName);
                     return false;
                 }
             } else {
@@ -939,22 +940,21 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
         else if (type == 277 || type == 275) {  // R_AARCH64_ADD_ABS_LO12_NC 或 R_AARCH64_ADR_PREL_PG_HI21
             // 符号定义在当前文件中
             if (sym->st_shndx != SHN_UNDEF) {
-                // 符号定义在当前文件中
-                if (sym->st_shndx < parser.getSize() / sizeof(Elf64_Shdr)) {
-                    auto symSection = parser.getSectionHeader(sym->st_shndx);
-                    if (symSection) {
-                        // 对于 .bss 节（SHT_NOBITS），我们需要计算其地址
-                        if (symSection->sh_type == 8) {  // SHT_NOBITS
-                            targetAddr = baseAddr + symValue;
-                        } else {
-                            targetAddr = baseAddr + symValue;
-                        }
+                auto symSection = parser.getSectionHeader(sym->st_shndx);
+                if (symSection) {
+                    // 对于 .bss 节（SHT_NOBITS），我们需要计算其地址
+                    if (symSection->sh_type == 8) {  // SHT_NOBITS
+                        // 符号在 .bss 节中的地址 = .bss 节的起始地址 + 符号在节中的偏移
+                        targetAddr = baseAddr + symSection->sh_addr + symValue;
+                        std::cout << "DEBUG: .bss symbol " << symName << ": "
+                                  << "section_addr=0x" << std::hex << symSection->sh_addr
+                                  << ", offset=0x" << symValue
+                                  << ", target=0x" << targetAddr << std::dec << std::endl;
                     } else {
-                        fprintf(stderr, "ERROR: Cannot find section for symbol: %s\n", symName);
-                        return false;
+                        targetAddr = baseAddr + symValue;
                     }
                 } else {
-                    fprintf(stderr, "ERROR: Invalid section index for symbol: %s\n", symName);
+                    fprintf(stderr, "ERROR: Cannot find section for symbol: %s\n", symName);
                     return false;
                 }
             } else {
@@ -971,7 +971,23 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
         else if (!usePLT) {
             // Normal symbol resolution
             if (sym->st_shndx != SHN_UNDEF) {
-                targetAddr = baseAddr + symValue;
+                auto symSection = parser.getSectionHeader(sym->st_shndx);
+                if (symSection) {
+                    // 对于 .bss 节（SHT_NOBITS），我们需要计算其地址
+                    if (symSection->sh_type == 8) {  // SHT_NOBITS
+                        // 符号在 .bss 节中的地址 = .bss 节的起始地址 + 符号在节中的偏移
+                        targetAddr = baseAddr + symSection->sh_addr + symValue;
+                        std::cout << "DEBUG: .bss symbol " << symName << ": "
+                                  << "section_addr=0x" << std::hex << symSection->sh_addr
+                                  << ", offset=0x" << symValue
+                                  << ", target=0x" << targetAddr << std::dec << std::endl;
+                    } else {
+                        targetAddr = baseAddr + symValue;
+                    }
+                } else {
+                    fprintf(stderr, "ERROR: Cannot find section for symbol: %s\n", symName);
+                    return false;
+                }
             } else {
                 auto it = Ctx.SymbolTable.find(symName);
                 if (it != Ctx.SymbolTable.end()) {
