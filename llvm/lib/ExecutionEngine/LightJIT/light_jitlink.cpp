@@ -396,7 +396,6 @@ bool MinimalJITLinker::setupPLTAndGOT() {
     }
 
     // 计算 PLT 和 GOT 所需大小
-    // 每个 PLT 条目 16 字节（4条指令）
     size_t pltEntryCount = 2048;
     size_t gotEntryCount = 2048;
 
@@ -404,11 +403,10 @@ bool MinimalJITLinker::setupPLTAndGOT() {
     size_t gotSize = gotEntryCount * 8;   // 每个 GOT 条目 8 字节
 
     std::cout << "DEBUG: Setting up PLT and GOT" << std::endl;
-    std::cout << "  PLT entries: " << std::dec << pltEntryCount << ", size: " << pltSize << " bytes" << std::endl;
-    std::cout << "  GOT entries: " << std::dec << gotEntryCount << ", size: " << gotSize << " bytes" << std::endl;
+    std::cout << "  PLT entries: " << pltEntryCount << ", size: " << pltSize << " bytes" << std::endl;
+    std::cout << "  GOT entries: " << gotEntryCount << ", size: " << gotSize << " bytes" << std::endl;
 
     // 在现有内存之后分配 PLT 和 GOT
-    // 注意：我们需要确保 PLT 在代码附近（在 ±128MB 范围内）
     size_t newTotalSize = Ctx.CurrentAlloc.Size + pltSize + gotSize;
 
     // 尝试在当前内存之后扩展
@@ -437,90 +435,21 @@ bool MinimalJITLinker::setupPLTAndGOT() {
         // 更新上下文
         Ctx.CurrentAlloc.Memory = static_cast<char*>(newMemory);
         Ctx.CurrentAlloc.Size = newTotalSize;
-        Ctx.CurrentAlloc.BaseAddress = reinterpret_cast<uint64_t>(newMemory);
     }
 
     // 设置 PLT 和 GOT 地址
-    // 将 GOT 放在代码段之后，但确保在 ±2GB 范围内
-    // 计算代码段的结束地址
     uint64_t codeEnd = Ctx.CurrentAlloc.BaseAddress + (Ctx.CurrentAlloc.Size - pltSize - gotSize);
-
-    // 将 PLT 和 GOT 放在代码段之后
     Ctx.PLTBaseAddr = codeEnd;
     Ctx.GOTBaseAddr = Ctx.PLTBaseAddr + pltSize;
     Ctx.GOTPtr = Ctx.CurrentAlloc.Memory + (Ctx.GOTBaseAddr - Ctx.CurrentAlloc.BaseAddress);
 
-    std::cout << "DEBUG: Ctx.CurrentAlloc.Memory: 0x" << std::hex << (uint64_t)Ctx.CurrentAlloc.Memory << ", Ctx.CurrentAlloc.Size: 0x" << Ctx.CurrentAlloc.Size << std::endl;
     std::cout << "DEBUG: PLT base: 0x" << std::hex << Ctx.PLTBaseAddr << std::dec << std::endl;
     std::cout << "DEBUG: GOT base: 0x" << std::hex << Ctx.GOTBaseAddr << std::dec << std::endl;
-    std::cout << "DEBUG: Code end: 0x" << std::hex << codeEnd << std::dec << std::endl;
-    std::cout << "DEBUG: Distance from code to GOT: 0x" << std::hex
-              << (Ctx.GOTBaseAddr - Ctx.CurrentAlloc.BaseAddress) << std::dec << std::endl;
 
     // 初始化 PLT 条目向量
     Ctx.PLTEntries.resize(pltEntryCount);
 
-    // 初始化 PLT 条目为跳转桩
-    for (size_t i = 0; i < pltEntryCount; i++) {
-        AArch64PLTEntry* entry = &Ctx.PLTEntries[i];
-
-        // 获取 GOT 条目地址
-        uint64_t gotEntryAddr = Ctx.GOTBaseAddr + (i * 8);
-
-        // 计算 GOT 条目相对于 PLT 条目的页偏移
-        uint64_t pltEntryAddr = Ctx.PLTBaseAddr + (i * sizeof(AArch64PLTEntry));
-        int64_t pageOffset = ((gotEntryAddr & ~0xFFFULL) - (pltEntryAddr & ~0xFFFULL));
-        int64_t pageShifted = pageOffset >> 12;
-
-        // 检查偏移是否在范围内
-        if (pageShifted < -((1LL) << 20) || pageShifted >= ((1LL) << 20)) {
-            std::cerr << "ERROR: GOT entry too far from PLT entry: "
-                      << pageShifted << " pages" << std::endl;
-            return false;
-        }
-
-        // 编码指令
-        uint32_t imm = pageShifted & 0x1FFFFF;
-
-        // 1. adrp x16, [page address of GOT entry]
-        // 正确编码：0x90 0000 00 | immhi:immlo:Rd
-        uint32_t adrpInstr = 0x90000000;  // adrp 指令基
-        adrpInstr |= ((imm >> 2) & 0x7FFFF) << 5;  // immhi[18:2] 放在 bits[23:5]
-        adrpInstr |= (imm & 0x3) << 29;           // immlo[1:0] 放在 bits[30:29]
-        adrpInstr |= 16;  // 目标寄存器 x16 (寄存器号放在 bits[4:0])
-
-        // 2. ldr x16, [x16, #offset within page]
-        // 计算页内偏移，确保是8的倍数（64位加载）
-        uint32_t offsetInPage = gotEntryAddr & 0xFFF;
-        if (offsetInPage % 8 != 0) {
-            std::cerr << "ERROR: GOT entry address not 8-byte aligned: 0x"
-                      << std::hex << gotEntryAddr << std::dec << std::endl;
-            return false;
-        }
-
-        // ldr 指令编码：F9 40 00 00 | imm12:Rn:Rt
-        // imm12 = offsetInPage >> 3 (因为64位加载，偏移是8字节倍数)
-        uint32_t ldrInstr = 0xF9400000;  // ldr x16, [x16, #offset]
-        ldrInstr |= ((offsetInPage >> 3) & 0xFFF) << 10;  // imm12 放在 bits[21:10]
-        ldrInstr |= 16 << 5;  // Rn = x16 (放在 bits[9:5])
-        ldrInstr |= 16;       // Rt = x16 (放在 bits[4:0])
-
-        // 3. br x16
-        // br 指令编码：D6 1F 00 00 | Rn:00000
-        uint32_t brInstr = 0xD61F0000;  // br x16
-        brInstr |= 16 << 5;  // Rn = x16 (放在 bits[9:5])
-
-        entry->instr0 = adrpInstr;
-        entry->instr1 = ldrInstr;
-        entry->instr2 = brInstr;
-        entry->padding = 0;  // 填充为0，使结构为16字节对齐
-
-        // 将 PLT 条目写入内存
-        char* pltLocation = Ctx.CurrentAlloc.Memory +
-                           (Ctx.PLTBaseAddr - Ctx.CurrentAlloc.BaseAddress) +
-                           (i * sizeof(AArch64PLTEntry));
-        *reinterpret_cast<AArch64PLTEntry*>(pltLocation) = *entry;
-    }
+    // 注意：我们不在这里初始化PLT指令，而是在分配时动态生成
 
     // 初始化 GOT 条目为 0
     uint64_t* gotEntries = reinterpret_cast<uint64_t*>(Ctx.GOTPtr);
@@ -528,9 +457,11 @@ bool MinimalJITLinker::setupPLTAndGOT() {
         gotEntries[i] = 0;
     }
 
-    // 重置 GOT 索引
+    // 重置索引
     Ctx.NextGOTIndex = 0;
+    Ctx.NextPLTIndex = 0;  // 添加这个成员变量
     Ctx.GotSymbolMap.clear();
+    Ctx.PLTSymbolMap.clear();
 
     return true;
 }
@@ -543,6 +474,9 @@ uint64_t MinimalJITLinker::getGOTEntryForSymbol(const std::string& symbolName, u
         // 确保 GOT 条目中的地址是最新的
         uint64_t* gotEntries = reinterpret_cast<uint64_t*>(Ctx.GOTPtr);
         gotEntries[it->second] = targetAddr;
+        std::cout << "DEBUG: Found existing GOT entry for symbol: " << symbolName
+                  << " at slot " << it->second
+                  << ", updating value to 0x" << std::hex << targetAddr << std::dec << std::endl;
         return gotEntryAddr;
     }
 
@@ -550,7 +484,7 @@ uint64_t MinimalJITLinker::getGOTEntryForSymbol(const std::string& symbolName, u
     size_t slotIndex = Ctx.NextGOTIndex;
 
     // 计算 GOT 条目数
-    size_t gotSize = 2048 * 8;  // 假设与 setupPLTAndGOT 一致
+    size_t gotSize = 2048 * 8;
     size_t gotEntryCount = gotSize / 8;
 
     if (slotIndex >= gotEntryCount) {
@@ -578,16 +512,74 @@ uint64_t MinimalJITLinker::getGOTEntryForSymbol(const std::string& symbolName, u
     return gotAddr;
 }
 
+void MinimalJITLinker::generatePLTEntry(uint64_t pltAddr, uint64_t gotAddr, size_t slotIndex) {
+    // 计算 GOT 条目相对于 PLT 条目的页偏移
+    int64_t pageOffset = ((gotAddr & ~0xFFFULL) - (pltAddr & ~0xFFFULL));
+    int64_t pageShifted = pageOffset >> 12;
+
+    // 检查偏移是否在范围内
+    if (pageShifted < -((1LL) << 20) || pageShifted >= ((1LL) << 20)) {
+        std::cerr << "ERROR: GOT entry too far from PLT entry: "
+                  << pageShifted << " pages" << std::endl;
+        return;
+    }
+
+    // 编码指令
+    uint32_t imm = pageShifted & 0x1FFFFF;
+
+    // 1. adrp x16, [page address of GOT entry]
+    uint32_t adrpInstr = 0x90000000;
+    adrpInstr |= ((imm >> 2) & 0x7FFFF) << 5;
+    adrpInstr |= (imm & 0x3) << 29;
+    adrpInstr |= 16;  // 目标寄存器 x16
+
+    // 2. ldr x16, [x16, #offset within page]
+    uint32_t offsetInPage = gotAddr & 0xFFF;
+    if (offsetInPage % 8 != 0) {
+        std::cerr << "ERROR: GOT entry address not 8-byte aligned: 0x"
+                  << std::hex << gotAddr << std::dec << std::endl;
+        return;
+    }
+
+    uint32_t ldrInstr = 0xF9400000;
+    ldrInstr |= ((offsetInPage >> 3) & 0xFFF) << 10;
+    ldrInstr |= 16 << 5;  // Rn = x16
+    ldrInstr |= 16;       // Rt = x16
+
+    // 3. br x16
+    uint32_t brInstr = 0xD61F0000;
+    brInstr |= 16 << 5;  // Rn = x16
+
+    // 将指令写入内存
+    char* pltLocation = Ctx.CurrentAlloc.Memory + (pltAddr - Ctx.CurrentAlloc.BaseAddress);
+
+    AArch64PLTEntry entry;
+    entry.instr0 = adrpInstr;
+    entry.instr1 = ldrInstr;
+    entry.instr2 = brInstr;
+    entry.padding = 0;
+
+    *reinterpret_cast<AArch64PLTEntry*>(pltLocation) = entry;
+
+    // 更新PLT条目向量
+    if (slotIndex < Ctx.PLTEntries.size()) {
+        Ctx.PLTEntries[slotIndex] = entry;
+    }
+}
+
 uint64_t MinimalJITLinker::getPLTEntryForSymbol(const std::string& symbolName) {
     // 检查是否已经有这个符号的 PLT 条目
     auto it = Ctx.PLTSymbolMap.find(symbolName);
     if (it != Ctx.PLTSymbolMap.end()) {
-        return Ctx.PLTBaseAddr + (it->second * 16);  // 每个条目 16 字节
+        return Ctx.PLTBaseAddr + (it->second * 16);
     }
 
     // 分配新的 PLT 槽位
-    size_t slotIndex = Ctx.PLTSymbolMap.size();
-    if (slotIndex >= Ctx.PLTEntries.size()) {
+    size_t slotIndex = Ctx.NextPLTIndex;
+
+    // 计算 PLT 条目数
+    size_t pltEntryCount = 2048;
+    if (slotIndex >= pltEntryCount) {
         std::cerr << "ERROR: PLT table full, cannot allocate entry for symbol: "
                   << symbolName << std::endl;
         return 0;
@@ -595,20 +587,16 @@ uint64_t MinimalJITLinker::getPLTEntryForSymbol(const std::string& symbolName) {
 
     // 在映射中记录符号
     Ctx.PLTSymbolMap[symbolName] = slotIndex;
+    Ctx.NextPLTIndex++;
 
     // 获取符号地址
     uint64_t symAddr = 0;
     auto symIt = Ctx.SymbolTable.find(symbolName);
     if (symIt != Ctx.SymbolTable.end()) {
-        // 如果符号已经在符号表中，获取其地址
         symAddr = symIt->second;
-    } else {
-        // 否则，设置为 0，稍后解析
-        symAddr = 0;
     }
 
     // 获取或创建 GOT 条目
-    // 重要：调用 getGOTEntryForSymbol 来确保有对应的 GOT 条目
     uint64_t gotAddr = getGOTEntryForSymbol(symbolName, symAddr);
     if (gotAddr == 0) {
         std::cerr << "ERROR: Failed to get GOT entry for symbol: "
@@ -616,14 +604,16 @@ uint64_t MinimalJITLinker::getPLTEntryForSymbol(const std::string& symbolName) {
         return 0;
     }
 
-    // 注意：我们已经通过 getGOTEntryForSymbol 设置了 GOT 条目
-    // 不需要再单独设置 GOT 条目
-
+    // 计算PLT条目地址
     uint64_t pltAddr = Ctx.PLTBaseAddr + (slotIndex * 16);
+
+    // 生成PLT指令
+    generatePLTEntry(pltAddr, gotAddr, slotIndex);
+
     std::cout << "DEBUG: Allocated PLT entry for symbol: " << symbolName
               << " at 0x" << std::hex << pltAddr << std::dec
               << " (slot " << slotIndex << ")"
-              << ", GOT entry at 0x" << std::hex << gotAddr << std::dec
+              << ", referencing GOT entry at 0x" << std::hex << gotAddr << std::dec
               << std::endl;
 
     return pltAddr;
@@ -758,49 +748,40 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
         const char* symName = strtab + sym->st_name;
         uint64_t symValue = sym->st_value;
         uint64_t targetAddr = 0;
-        bool usePLT = false;
-        uint64_t gotAddr = 0;  // 用于存储 GOT 条目地址
+        uint64_t gotAddr = 0;
+
+        // 统一的符号地址计算函数
+        auto calculateSymbolAddress = [&]() -> uint64_t {
+            if (sym->st_shndx != SHN_UNDEF) {
+                auto symSection = parser.getSectionHeader(sym->st_shndx);
+                if (symSection) {
+                    if (symSection->sh_type == 8) {  // SHT_NOBITS (.bss)
+                        return baseAddr + symSection->sh_addr + symValue;
+                    } else {
+                        return baseAddr + symValue;
+                    }
+                } else {
+                    fprintf(stderr, "ERROR: Cannot find section for symbol: %s\n", symName);
+                    return 0;
+                }
+            } else {
+                auto it = Ctx.SymbolTable.find(symName);
+                if (it != Ctx.SymbolTable.end()) {
+                    return it->second;
+                } else {
+                    fprintf(stderr, "ERROR: Undefined symbol: %s\n", symName);
+                    return 0;
+                }
+            }
+        };
 
         // 处理 R_AARCH64_JUMP26 和 R_AARCH64_CALL26
         if (type == 283 || type == 282) {  // R_AARCH64_CALL26 或 R_AARCH64_JUMP26
             // 计算目标地址
-            uint64_t targetAddr = 0;
-            if (sym->st_shndx != SHN_UNDEF) {
-                // 符号定义在当前文件中
-                auto symSection = parser.getSectionHeader(sym->st_shndx);
-                if (symSection) {
-                    // 对于 .bss 节（SHT_NOBITS），我们需要计算其地址
-                    if (symSection->sh_type == 8) {  // SHT_NOBITS
-                        // 符号在 .bss 节中的地址 = .bss 节的起始地址 + 符号在节中的偏移
-                        // 注意：baseAddr 是重定位基地址
-                        targetAddr = baseAddr + symSection->sh_addr + symValue;
-                        std::cout << "DEBUG: .bss symbol " << symName << ": "
-                                  << "section_addr=0x" << std::hex << symSection->sh_addr
-                                  << ", offset=0x" << symValue
-                                  << ", target=0x" << targetAddr << std::dec << std::endl;
-                    } else {
-                        // 其他类型的节
-                        targetAddr = baseAddr + symValue;
-                    }
-                } else {
-                    fprintf(stderr, "ERROR: Cannot find section for symbol: %s\n", symName);
-                    return false;
-                }
-            } else {
-                // 查找外部符号
-                auto it = Ctx.SymbolTable.find(symName);
-                if (it != Ctx.SymbolTable.end()) {
-                    targetAddr = it->second;
-                } else {
-                    // 如果符号未定义，可能需要创建 PLT 条目
-                    std::cout << "WARNING: Undefined symbol: " << symName
-                              << ", creating PLT entry" << std::endl;
-                    targetAddr = getPLTEntryForSymbol(symName);
-                    if (targetAddr == 0) {
-                        fprintf(stderr, "ERROR: Failed to create PLT entry for symbol: %s\n", symName);
-                        return false;
-                    }
-                }
+            targetAddr = calculateSymbolAddress();
+            if (targetAddr == 0) {
+                fprintf(stderr, "ERROR: Failed to calculate address for symbol: %s\n", symName);
+                return false;
             }
 
             // 计算分支偏移
@@ -811,7 +792,6 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
             if (branch_offset >= -(1 << 27) && branch_offset < (1 << 27)) {
                 // 在范围内，直接应用重定位
                 char* locPtr = memory + rela->r_offset;
-                // 修复：传递 targetAddr 而不是 targetAddr + rela->r_addend
                 if (!applyRelocation(type, locPtr, targetAddr,
                                    rela->r_addend, location, rela->r_offset)) {
                     fprintf(stderr, "ERROR: Failed to apply relocation type %u for symbol %s\n", type, symName);
@@ -831,7 +811,6 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
 
                 // 应用重定位到 PLT 条目
                 char* locPtr = memory + rela->r_offset;
-                // 修复：传递 pltAddr 而不是 pltAddr + rela->r_addend
                 if (!applyRelocation(type, locPtr, pltAddr,
                                    rela->r_addend, location, rela->r_offset)) {
                     fprintf(stderr, "ERROR: Failed to apply PLT relocation type %u for symbol %s\n", type, symName);
@@ -847,39 +826,13 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
 
         // 处理 R_AARCH64_ADR_GOT_PAGE
         if (type == 311) {  // R_AARCH64_ADR_GOT_PAGE
-            // 获取符号的实际地址
-            if (sym->st_shndx != SHN_UNDEF) {
-                // 符号定义在当前文件中
-                auto symSection = parser.getSectionHeader(sym->st_shndx);
-                if (symSection) {
-                    // 对于 .bss 节（SHT_NOBITS），我们需要计算其地址
-                    if (symSection->sh_type == 8) {  // SHT_NOBITS
-                        // 符号在 .bss 节中的地址 = .bss 节的起始地址 + 符号在节中的偏移
-                        targetAddr = baseAddr + symSection->sh_addr + symValue;
-                        std::cout << "DEBUG: .bss symbol " << symName << ": "
-                                  << "section_addr=0x" << std::hex << symSection->sh_addr
-                                  << ", offset=0x" << symValue
-                                  << ", target=0x" << targetAddr << std::dec << std::endl;
-                    } else {
-                        targetAddr = baseAddr + symValue;
-                    }
-                } else {
-                    fprintf(stderr, "ERROR: Cannot find section for symbol: %s\n", symName);
-                    return false;
-                }
-            } else {
-                // 查找外部符号
-                auto it = Ctx.SymbolTable.find(symName);
-                if (it != Ctx.SymbolTable.end()) {
-                    targetAddr = it->second;
-                } else {
-                    fprintf(stderr, "ERROR: Undefined symbol: %s\n", symName);
-                    return false;
-                }
+            // 计算符号地址
+            targetAddr = calculateSymbolAddress();
+            if (targetAddr == 0) {
+                fprintf(stderr, "ERROR: Failed to calculate address for symbol: %s\n", symName);
+                return false;
             }
 
-            // 总是为 R_AARCH64_ADR_GOT_PAGE 使用 GOT 条目
-            // 因为这是专门用于 GOT 访问的重定位
             // 获取或创建 GOT 条目
             gotAddr = getGOTEntryForSymbol(symName, targetAddr);
             if (gotAddr == 0) {
@@ -892,41 +845,15 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
             std::cout << "DEBUG: R_AARCH64_ADR_GOT_PAGE for symbol: " << symName
                       << ", GOT addr=0x" << std::hex << gotAddr << std::dec << std::endl;
         }
-        // 处理 R_AARCH64LD64_GOT_LO12_NC
+        // 处理 R_AARCH64_LD64_GOT_LO12_NC
         else if (type == 312) {  // R_AARCH64_LD64_GOT_LO12_NC
-            // 获取符号的实际地址
-            if (sym->st_shndx != SHN_UNDEF) {
-                // 符号定义在当前文件中
-                auto symSection = parser.getSectionHeader(sym->st_shndx);
-                if (symSection) {
-                    // 对于 .bss 节（SHT_NOBITS），我们需要计算其地址
-                    if (symSection->sh_type == 8) {  // SHT_NOBITS
-                        // 符号在 .bss 节中的地址 = .bss 节的起始地址 + 符号在节中的偏移
-                        targetAddr = baseAddr + symSection->sh_addr + symValue;
-                        std::cout << "DEBUG: .bss symbol " << symName << ": "
-                                  << "section_addr=0x" << std::hex << symSection->sh_addr
-                                  << ", offset=0x" << symValue
-                                  << ", target=0x" << targetAddr << std::dec << std::endl;
-                    } else {
-                        targetAddr = baseAddr + symValue;
-                    }
-                } else {
-                    fprintf(stderr, "ERROR: Cannot find section for symbol: %s\n", symName);
-                    return false;
-                }
-            } else {
-                // 查找外部符号
-                auto it = Ctx.SymbolTable.find(symName);
-                if (it != Ctx.SymbolTable.end()) {
-                    targetAddr = it->second;
-                } else {
-                    fprintf(stderr, "ERROR: Undefined symbol: %s\n", symName);
-                    return false;
-                }
+            // 计算符号地址
+            targetAddr = calculateSymbolAddress();
+            if (targetAddr == 0) {
+                fprintf(stderr, "ERROR: Failed to calculate address for symbol: %s\n", symName);
+                return false;
             }
 
-            // 总是为 R_AARCH64_LD64_GOT_LO12_NC 使用 GOT 条目
-            // 因为这是专门用于 GOT 访问的重定位
             // 获取或创建 GOT 条目
             gotAddr = getGOTEntryForSymbol(symName, targetAddr);
             if (gotAddr == 0) {
@@ -940,66 +867,12 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                       << ", GOT addr=0x" << std::hex << gotAddr << std::dec << std::endl;
         }
         // 处理其他重定位类型
-        else if (type == 277 || type == 275) {  // R_AARCH64_ADD_ABS_LO12_NC 或 R_AARCH64_ADR_PREL_PG_HI21
-            // 符号定义在当前文件中
-            if (sym->st_shndx != SHN_UNDEF) {
-                auto symSection = parser.getSectionHeader(sym->st_shndx);
-                if (symSection) {
-                    // 对于 .bss 节（SHT_NOBITS），我们需要计算其地址
-                    if (symSection->sh_type == 8) {  // SHT_NOBITS
-                        // 符号在 .bss 节中的地址 = .bss 节的起始地址 + 符号在节中的偏移
-                        targetAddr = baseAddr + symSection->sh_addr + symValue;
-                        std::cout << "DEBUG: .bss symbol " << symName << ": "
-                                  << "section_addr=0x" << std::hex << symSection->sh_addr
-                                  << ", offset=0x" << symValue
-                                  << ", target=0x" << targetAddr
-                                  << ", rela->r_addend=0x" << rela->r_addend << std::dec << std::endl;
-                    } else {
-                        targetAddr = baseAddr + symValue;
-                    }
-                } else {
-                    fprintf(stderr, "ERROR: Cannot find section for symbol: %s\n", symName);
-                    return false;
-                }
-            } else {
-                // 查找外部符号
-                auto it = Ctx.SymbolTable.find(symName);
-                if (it != Ctx.SymbolTable.end()) {
-                    targetAddr = it->second;
-                } else {
-                    fprintf(stderr, "ERROR: Undefined symbol: %s\n", symName);
-                    return false;
-                }
-            }
-        }
-        else if (!usePLT) {
-            // Normal symbol resolution
-            if (sym->st_shndx != SHN_UNDEF) {
-                auto symSection = parser.getSectionHeader(sym->st_shndx);
-                if (symSection) {
-                    // 对于 .bss 节（SHT_NOBITS），我们需要计算其地址
-                    if (symSection->sh_type == 8) {  // SHT_NOBITS
-                        // 符号在 .bss 节中的地址 = .bss 节的起始地址 + 符号在节中的偏移
-                        targetAddr = baseAddr + symSection->sh_addr + symValue;
-                        std::cout << "DEBUG: .bss symbol " << symName << ": "
-                                  << "section_addr=0x" << std::hex << symSection->sh_addr
-                                  << ", offset=0x" << symValue
-                                  << ", target=0x" << targetAddr << std::dec << std::endl;
-                    } else {
-                        targetAddr = baseAddr + symValue;
-                    }
-                } else {
-                    fprintf(stderr, "ERROR: Cannot find section for symbol: %s\n", symName);
-                    return false;
-                }
-            } else {
-                auto it = Ctx.SymbolTable.find(symName);
-                if (it != Ctx.SymbolTable.end()) {
-                    targetAddr = it->second;
-                } else {
-                    fprintf(stderr, "ERROR: Undefined symbol: %s\n", symName);
-                    return false;
-                }
+        else {
+            // 计算符号地址
+            targetAddr = calculateSymbolAddress();
+            if (targetAddr == 0) {
+                fprintf(stderr, "ERROR: Failed to calculate address for symbol: %s\n", symName);
+                return false;
             }
         }
 
@@ -1007,7 +880,6 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
         uint64_t location = baseAddr + rela->r_offset;
         char* locPtr = memory + rela->r_offset;
 
-        // 修复：传递 targetAddr 而不是 targetAddr + rela->r_addend
         if (!applyRelocation(type, locPtr, targetAddr,
                            rela->r_addend, location, rela->r_offset)) {
             fprintf(stderr, "ERROR: Failed to apply relocation type %u for symbol %s\n", type, symName);

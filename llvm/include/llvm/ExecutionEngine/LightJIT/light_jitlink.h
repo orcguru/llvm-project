@@ -8,6 +8,18 @@
 #include <vector>
 #include <cstdio>
 
+struct GOTEntryInfo {
+    uint64_t gotAddr;      // GOT条目的地址
+    uint64_t slotIndex;    // 槽位索引
+    uint64_t targetAddr;   // 目标地址
+};
+
+struct PLTEntryInfo {
+    uint64_t pltAddr;      // PLT条目的地址
+    uint64_t slotIndex;    // 槽位索引
+    uint64_t gotEntryAddr; // 关联的GOT条目地址
+};
+
 // 更新 PLT 条目结构为3条指令
 struct AArch64PLTEntry {
     uint32_t instr0;  // adrp x16, [GOT entry page]
@@ -44,7 +56,8 @@ struct JITContext {
 
     // GOT 相关
     std::unordered_map<std::string, uint64_t> GotSymbolMap;  // 符号名 -> GOT 条目索引
-    uint64_t NextGOTIndex = 0;  // 下一个可用的 GOT 槽位索引
+    uint64_t NextGOTIndex = 0;
+    uint64_t NextPLTIndex = 0;
 };
 
 // 自定义的极简 ELF 解析器
@@ -94,6 +107,7 @@ private:
     bool setupPLTAndGOT();
     uint64_t getPLTEntryForSymbol(const std::string& symbolName);
     uint64_t getGOTEntryForSymbol(const std::string& symbolName, uint64_t targetAddr);
+    void generatePLTEntry(uint64_t pltAddr, uint64_t gotAddr, size_t slotIndex);
 
     void printMemoryLayout(const MinimalELF64Parser& parser);
     void printSectionsInfo(const MinimalELF64Parser& parser);
