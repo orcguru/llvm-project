@@ -437,6 +437,7 @@ bool MinimalJITLinker::setupPLTAndGOT() {
         // 更新上下文
         Ctx.CurrentAlloc.Memory = static_cast<char*>(newMemory);
         Ctx.CurrentAlloc.Size = newTotalSize;
+        Ctx.CurrentAlloc.BaseAddress = reinterpret_cast<uint64_t>(newMemory);
     }
 
     // 设置 PLT 和 GOT 地址
@@ -449,6 +450,7 @@ bool MinimalJITLinker::setupPLTAndGOT() {
     Ctx.GOTBaseAddr = Ctx.PLTBaseAddr + pltSize;
     Ctx.GOTPtr = Ctx.CurrentAlloc.Memory + (Ctx.GOTBaseAddr - Ctx.CurrentAlloc.BaseAddress);
 
+    std::cout << "DEBUG: Ctx.CurrentAlloc.Memory: 0x" << std::hex << (uint64_t)Ctx.CurrentAlloc.Memory << ", Ctx.CurrentAlloc.Size: 0x" << Ctx.CurrentAlloc.Size << std::endl;
     std::cout << "DEBUG: PLT base: 0x" << std::hex << Ctx.PLTBaseAddr << std::dec << std::endl;
     std::cout << "DEBUG: GOT base: 0x" << std::hex << Ctx.GOTBaseAddr << std::dec << std::endl;
     std::cout << "DEBUG: Code end: 0x" << std::hex << codeEnd << std::dec << std::endl;
