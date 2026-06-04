@@ -155,13 +155,18 @@ public:
     ~MinimalJITLinker();
     
     // 主链接函数
-    bool link(const char* objectData, size_t objectSize, uint64_t baseAddress);
+    bool link(const char* objectData, size_t objectSize, uint64_t baseAddress,
+              uint64_t startCode,
+              void (*register_mapping)(uint64_t, uint64_t, uint64_t)
+              );
     
 private:
     size_t calculateTotalSize(const MinimalELF64Parser& parser);
     bool allocateMemory(size_t size, uint64_t preferredAddr);
     void buildSymbolTable(const MinimalELF64Parser& parser);
-    bool copySectionsAndRelocate(const MinimalELF64Parser& parser);
+    bool copySectionsAndRelocate(const MinimalELF64Parser& parser,
+                                uint64_t startCode,
+                                void (*register_mapping)(uint64_t, uint64_t, uint64_t));
     bool processRelocations(const MinimalELF64Parser& parser,
                            struct Elf64_Shdr* relocShdr,
                            char* memory,

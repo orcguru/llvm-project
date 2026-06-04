@@ -48,7 +48,10 @@ uint64_t jit_link_aot(jit_context_t* ctx,
                      size_t aot_size,
                      uint64_t base_address,
                      jit_memory_region** allocated_regions,
-                     size_t* region_count);
+                     size_t* region_count,
+                     uint64_t startCode,
+                     void (*register_mapping)(uint64_t, uint64_t, uint64_t)
+                     );
 
 // In qemu_lightjit.h (add this declaration)
 uint64_t jit_link_aot_with_helpers(jit_context_t* ctx,

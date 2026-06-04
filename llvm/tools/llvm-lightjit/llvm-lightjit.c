@@ -61,7 +61,7 @@ int main(int argc, char** argv) {
                                          helper_file, &regions, &region_count);
     } else {
         entry = jit_link_aot(ctx, file_data, st.st_size, 0,
-                            &regions, &region_count);
+                            &regions, &region_count, 0, NULL);
     }
     
     if (entry == 0) {

@@ -47,7 +47,10 @@ uint64_t jit_link_aot(jit_context_t* ctx,
                      size_t aot_size,
                      uint64_t base_address,
                      jit_memory_region** allocated_regions,
-                     size_t* region_count) {
+                     size_t* region_count,
+                     uint64_t startCode,
+                     void (*register_mapping)(uint64_t, uint64_t, uint64_t)
+                     ) {
     if (!ctx || !aot_data || aot_size == 0) {
         return 0;
     }
@@ -57,7 +60,7 @@ uint64_t jit_link_aot(jit_context_t* ctx,
 
     // 执行链接
     if (!linker.link(static_cast<const char*>(aot_data),
-                     aot_size, base_address)) {
+                     aot_size, base_address, startCode, register_mapping)) {
         return 0;
     }
 
@@ -75,11 +78,7 @@ uint64_t jit_link_aot(jit_context_t* ctx,
         region->permissions = 7; // RWX
         *region_count = 1;
     }
-
-    // 返回入口地址
-    MinimalELF64Parser parser(static_cast<const char*>(aot_data), aot_size);
-    uint64_t entry = parser.getEntryPoint();
-    return ctx->impl.CurrentAlloc.BaseAddress + entry;
+    return 1;
 }
 
 // Add to qemu_lightjit.cpp, in the extern "C" block
@@ -122,7 +121,7 @@ uint64_t jit_link_aot_with_helpers(jit_context_t* ctx,
 
     // 执行链接
     if (!linker.link(static_cast<const char*>(aot_data),
-                     aot_size, base_address)) {
+                     aot_size, base_address, 0, NULL)) {
         return 0;
     }
 
@@ -253,10 +252,18 @@ uint64_t invoke_lightlink(const char *AotFile,
     jit_memory_region* regions = nullptr;
     size_t region_count = 0;
 
-    uint64_t entry_point = jit_link_aot(ctx, file_data, size, 0,
-                                        &regions, &region_count);
-
-    if (entry_point == 0) {
+#ifndef DEBUG
+    if (jit_link_aot(ctx, file_data, size, 0, &regions, &region_count, StartCode, register_mapping) == 0) {
+        if (log_message) {
+            log_message("ERROR: Failed to link AOT file");
+        }
+        jit_context_destroy(ctx);
+        delete[] file_data;
+        jit_free_regions(regions, region_count);
+        return 1;
+    }
+#else
+    if (jit_link_aot(ctx, file_data, size, 0, &regions, &region_count, 0, NULL) == 0) {
         if (log_message) {
             log_message("ERROR: Failed to link AOT file");
         }
@@ -266,6 +273,7 @@ uint64_t invoke_lightlink(const char *AotFile,
         return 1;
     }
 
+#if 0
     // 5. 解析 ELF 符号表，处理函数映射
     MinimalELF64Parser parser(file_data, size);
     if (parser.isValid()) {
@@ -355,6 +363,8 @@ uint64_t invoke_lightlink(const char *AotFile,
             }
         }
     }
+#endif
+#endif
 
     delete[] file_data;
     jit_free_regions(regions, region_count);

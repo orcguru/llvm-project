@@ -192,7 +192,9 @@ void MinimalJITLinker::buildSymbolTable(const MinimalELF64Parser& parser) {
     }
 }
 
-bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser) {
+bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser,
+                                              uint64_t startCode,
+                                              void (*register_mapping)(uint64_t, uint64_t, uint64_t)) {
     char* memory = Ctx.CurrentAlloc.Memory;
     uint64_t baseAddr = Ctx.CurrentAlloc.BaseAddress;
 
@@ -214,6 +216,8 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser)
         return false;
     }
 
+    uint64_t *funcmap_ptr = NULL;
+    size_t funcmap_size = 0;
     // 首先复制所有 PROGBITS 段
     for (size_t i = 0; ; i++) {
         auto shdr = parser.getSectionHeader(i);
@@ -248,11 +252,23 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser)
 #endif
 
             memcpy(dst, src, shdr->sh_size);
+            funcmap_ptr = (uint64_t *)dst;
+            funcmap_size = shdr->sh_size;
 
             // 记录可执行段
             if (shdr->sh_flags & 4) { // SHF_EXECINSTR
                 Ctx.Modules.push_back({baseAddr + offset, shdr->sh_size});
             }
+        }
+    }
+
+    if (register_mapping) {
+        assert(funcmap_ptr);
+        for (size_t i = 0; i < funcmap_size/sizeof(uint64_t); ++i) {
+            uint64_t entry = funcmap_ptr[i];
+            uint64_t func_hex = (entry & 0xffffffff);
+            uint64_t host_addr = (uint64_t)memory + ((entry >> 32) & 0xffffffff);
+            register_mapping(startCode, func_hex, host_addr);
         }
     }
 
@@ -855,7 +871,10 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
     return true;
 }
 
-bool MinimalJITLinker::link(const char* objectData, size_t objectSize, uint64_t baseAddress) {
+bool MinimalJITLinker::link(const char* objectData, size_t objectSize, uint64_t baseAddress,
+                            uint64_t startCode,
+                            void (*register_mapping)(uint64_t, uint64_t, uint64_t)
+                            ) {
     MinimalELF64Parser parser(objectData, objectSize);
     if (!parser.isValid()) {
         fprintf(stderr, "ERROR:Invalid ELF file\n");
@@ -893,7 +912,7 @@ bool MinimalJITLinker::link(const char* objectData, size_t objectSize, uint64_t 
     buildSymbolTable(parser);
 
     // 5. 复制节并处理重定位
-    if (!copySectionsAndRelocate(parser)) {
+    if (!copySectionsAndRelocate(parser, startCode, register_mapping)) {
         fprintf(stderr, "ERROR:Failed to copy sections and relocate\n");
         return false;
     }
