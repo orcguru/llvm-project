@@ -6,6 +6,8 @@
 #include <sys/mman.h>
 #include <iostream>
 
+//#define DEBUG
+
 // 定义 helper 函数结构
 typedef struct helper_func {
     const char *name;
@@ -106,8 +108,10 @@ uint64_t jit_link_aot_with_helpers(jit_context_t* ctx,
                 // 解析格式: "function_name address"
                 if (sscanf(line, "%127s %lx", name, &address) == 2) {
                     ctx->impl.SymbolTable[name] = address;
+#ifdef DEBUG
                     std::cout << "Added helper: " << name << " = 0x"
                               << std::hex << address << std::dec << std::endl;
+#endif
                 }
             }
             fclose(f);
@@ -194,12 +198,6 @@ uint64_t invoke_lightlink(const char *AotFile,
                          size_t HelperFuncsCnt,
                          int enable_llvm_debug,
                          const char *entry) {
-
-    // 设置调试输出
-    if (log_message) {
-        log_message("Starting invoke_lightlink...");
-    }
-
     // 验证输入参数
     if (!AotFile) {
         if (log_message) {
@@ -231,12 +229,6 @@ uint64_t invoke_lightlink(const char *AotFile,
         return 1;
     }
 
-    if (log_message) {
-        std::stringstream msg;
-        msg << "Loaded ELF file: " << AotFile << ", size: " << size << " bytes";
-        log_message(msg.str().c_str());
-    }
-
     // 2. 创建 JIT 上下文
     jit_context_t* ctx = jit_context_create();
     if (!ctx) {
@@ -253,12 +245,6 @@ uint64_t invoke_lightlink(const char *AotFile,
         for (size_t i = 0; i < HelperFuncsCnt; i++) {
             if (helpers[i].name) {
                 ctx->impl.SymbolTable[helpers[i].name] = helpers[i].addr;
-                if (log_message) {
-                    std::stringstream msg;
-                    msg << "Added helper: " << helpers[i].name
-                        << " = 0x" << std::hex << helpers[i].addr << std::dec;
-                    log_message(msg.str().c_str());
-                }
             }
         }
     }
@@ -278,12 +264,6 @@ uint64_t invoke_lightlink(const char *AotFile,
         delete[] file_data;
         jit_free_regions(regions, region_count);
         return 1;
-    }
-
-    if (log_message) {
-        std::stringstream msg;
-        msg << "Successfully linked ELF file. Entry point: 0x" << std::hex << entry_point;
-        log_message(msg.str().c_str());
     }
 
     // 5. 解析 ELF 符号表，处理函数映射
@@ -376,39 +356,8 @@ uint64_t invoke_lightlink(const char *AotFile,
         }
     }
 
-    /*
-    // 6. 处理指定的入口点
-    uint64_t final_entry = entry_point;
-    if (entry && strlen(entry) > 0) {
-        // 查找指定的入口符号
-        uint64_t custom_entry = jit_find_symbol(ctx, entry);
-        if (custom_entry != 0) {
-            final_entry = custom_entry;
-            if (log_message) {
-                std::stringstream msg;
-                msg << "Using custom entry point: " << entry
-                    << " = 0x" << std::hex << final_entry;
-                log_message(msg.str().c_str());
-            }
-        } else {
-            if (log_message) {
-                std::stringstream msg;
-                msg << "WARNING: Custom entry point '" << entry
-                    << "' not found, using default";
-                log_message(msg.str().c_str());
-            }
-        }
-    }
-    */
-
-    // 7. 清理
-    //jit_context_destroy(ctx);
     delete[] file_data;
     jit_free_regions(regions, region_count);
-
-    if (log_message) {
-        log_message("invoke_lightlink completed successfully");
-    }
 
     return 0;
 }

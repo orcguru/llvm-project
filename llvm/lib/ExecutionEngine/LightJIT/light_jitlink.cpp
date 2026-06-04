@@ -14,6 +14,8 @@
 #include <unistd.h>
 #include <iostream>
 
+//#define DEBUG
+
 using namespace llvm;
 
 // MinimalELF64Parser 实现
@@ -84,11 +86,14 @@ MinimalJITLinker::MinimalJITLinker(JITContext& ctx) : Ctx(ctx) {}
 MinimalJITLinker::~MinimalJITLinker() {}
 
 void MinimalJITLinker::printSectionsInfo(const MinimalELF64Parser& parser) {
+#ifdef DEBUG
     std::cout << "\n=== ELF Sections Info ===" << std::endl;
+#endif
     for (size_t i = 0; ; i++) {
         auto shdr = parser.getSectionHeader(i);
         if (!shdr) break;
 
+#ifdef DEBUG
         std::cout << "Section " << i << ":" << std::endl;
         std::cout << "  Type: " << shdr->sh_type
                   << " (1=PROGBITS, 3=SYMTAB, 9=RELA)" << std::endl;
@@ -98,6 +103,7 @@ void MinimalJITLinker::printSectionsInfo(const MinimalELF64Parser& parser) {
         std::cout << "  Size: " << shdr->sh_size << " bytes" << std::endl;
         std::cout << "  Addralign: " << shdr->sh_addralign << std::endl;
         std::cout << std::endl;
+#endif
     }
 }
 
@@ -146,7 +152,9 @@ bool MinimalJITLinker::allocateMemory(size_t size, uint64_t preferredAddr) {
     Ctx.CurrentAlloc.Memory = static_cast<char*>(mem);
     Ctx.CurrentAlloc.Size = size;
     Ctx.CurrentAlloc.BaseAddress = reinterpret_cast<uint64_t>(mem);
+#ifdef DEBUG
     std::cout << "Ctx.CurrentAlloc.BaseAddress:" << std::hex << Ctx.CurrentAlloc.BaseAddress << " Ctx.CurrentAlloc.Size:" << Ctx.CurrentAlloc.Size << std::endl;
+#endif
     return true;
 }
 
@@ -177,11 +185,6 @@ void MinimalJITLinker::buildSymbolTable(const MinimalELF64Parser& parser) {
                 // 包含定义在当前文件中的符号（包括 .bss 节中的符号）
                 if (value != 0 && sym->st_shndx != SHN_UNDEF) {
                     Ctx.SymbolTable[name] = value;
-                    /*
-                    std::cout << "DEBUG: Added symbol to table: " << name
-                              << " = 0x" << std::hex << value << std::dec
-                              << " (section index: " << sym->st_shndx << ")" << std::endl;
-                    */
                 }
             }
             break;
@@ -235,12 +238,14 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser)
 
             char* dst = memory + offset;
 
+#ifdef DEBUG
             std::cout << "DEBUG: Copying PROGBITS section at addr=0x" << std::hex << shdr->sh_addr
                      << ", offset=0x" << offset
                      << ", size=" << std::dec << shdr->sh_size
                      << ", dst=0x" << std::hex << (uint64_t)dst
                      << ", memory=0x" << (uint64_t)memory
                      << ", baseAddr=0x" << baseAddr << std::endl;
+#endif
 
             memcpy(dst, src, shdr->sh_size);
 
@@ -268,10 +273,12 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser)
 
             char* dst = memory + offset;
 
+#ifdef DEBUG
             std::cout << "DEBUG: Zeroing NOBITS section at addr=0x" << std::hex << shdr->sh_addr
                      << ", offset=0x" << offset
                      << ", size=" << std::dec << shdr->sh_size
                      << ", dst=0x" << std::hex << (uint64_t)dst << std::endl;
+#endif
 
             // 将 NOBITS 节的内存清零
             memset(dst, 0, shdr->sh_size);
@@ -284,7 +291,9 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser)
         if (!shdr) break;
 
         if (shdr->sh_type == SHT_RELA) {  // 处理重定位节
+#ifdef DEBUG
             std::cout << "Processing relocation section " << i << std::endl;
+#endif
             if (!processRelocations(parser, shdr, memory, baseAddr - lowestAddr)) {
                 fprintf(stderr, "ERROR: Failed to process relocations for section %lu\n", i);
                 return false;
@@ -341,9 +350,11 @@ bool MinimalJITLinker::setupPLTAndGOT() {
     size_t pltSize = pltEntryCount * 16;  // 每个 PLT 条目 16 字节
     size_t gotSize = gotEntryCount * 8;   // 每个 GOT 条目 8 字节
 
+#ifdef DEBUG
     std::cout << "DEBUG: Setting up PLT and GOT" << std::endl;
     std::cout << "  PLT entries: " << pltEntryCount << ", size: " << pltSize << " bytes" << std::endl;
     std::cout << "  GOT entries: " << gotEntryCount << ", size: " << gotSize << " bytes" << std::endl;
+#endif
 
     // 在现有内存之后分配 PLT 和 GOT
     size_t newTotalSize = Ctx.CurrentAlloc.Size + pltSize + gotSize;
@@ -353,7 +364,9 @@ bool MinimalJITLinker::setupPLTAndGOT() {
                             newTotalSize, MREMAP_MAYMOVE);
     if (newMemory == MAP_FAILED) {
         // 如果 mremap 失败，分配新内存并复制
+#ifdef DEBUG
         std::cout << "DEBUG: mremap failed, allocating new memory" << std::endl;
+#endif
         newMemory = mmap(nullptr, newTotalSize,
                         PROT_READ | PROT_WRITE | PROT_EXEC,
                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -383,8 +396,10 @@ bool MinimalJITLinker::setupPLTAndGOT() {
     Ctx.GOTBaseAddr = Ctx.PLTBaseAddr + pltSize;
     Ctx.GOTPtr = Ctx.CurrentAlloc.Memory + (Ctx.GOTBaseAddr - Ctx.CurrentAlloc.BaseAddress);
 
+#ifdef DEBUG
     std::cout << "DEBUG: PLT base: 0x" << std::hex << Ctx.PLTBaseAddr << std::dec << std::endl;
     std::cout << "DEBUG: GOT base: 0x" << std::hex << Ctx.GOTBaseAddr << std::dec << std::endl;
+#endif
 
     // 初始化 PLT 条目向量
     Ctx.PLTEntries.resize(pltEntryCount);
@@ -414,9 +429,11 @@ uint64_t MinimalJITLinker::getGOTEntryForSymbol(const std::string& symbolName, u
         // 确保 GOT 条目中的地址是最新的
         uint64_t* gotEntries = reinterpret_cast<uint64_t*>(Ctx.GOTPtr);
         gotEntries[it->second] = targetAddr;
+#ifdef DEBUG
         std::cout << "DEBUG: Found existing GOT entry for symbol: " << symbolName
                   << " at slot " << it->second
                   << ", updating value to 0x" << std::hex << targetAddr << std::dec << std::endl;
+#endif
         return gotEntryAddr;
     }
 
@@ -444,10 +461,12 @@ uint64_t MinimalJITLinker::getGOTEntryForSymbol(const std::string& symbolName, u
     Ctx.NextGOTIndex++;
 
     uint64_t gotAddr = Ctx.GOTBaseAddr + (slotIndex * 8);
+#ifdef DEBUG
     std::cout << "DEBUG: Allocated GOT entry for symbol: " << symbolName
               << " at 0x" << std::hex << gotAddr << std::dec
               << " (slot " << slotIndex << "), value=0x"
               << std::hex << targetAddr << std::dec << std::endl;
+#endif
 
     return gotAddr;
 }
@@ -550,11 +569,13 @@ uint64_t MinimalJITLinker::getPLTEntryForSymbol(const std::string& symbolName) {
     // 生成PLT指令
     generatePLTEntry(pltAddr, gotAddr, slotIndex);
 
+#ifdef DEBUG
     std::cout << "DEBUG: Allocated PLT entry for symbol: " << symbolName
               << " at 0x" << std::hex << pltAddr << std::dec
               << " (slot " << slotIndex << ")"
               << ", referencing GOT entry at 0x" << std::hex << gotAddr << std::dec
               << std::endl;
+#endif
 
     return pltAddr;
 }
@@ -735,8 +756,10 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                 }
             } else {
                 // 超出范围，使用 PLT
+#ifdef DEBUG
                 std::cout << "DEBUG: Symbol " << symName << " is out of range (0x"
                           << std::hex << branch_offset << "), using PLT" << std::dec << std::endl;
+#endif
 
                 // 获取或创建 PLT 条目
                 uint64_t pltAddr = getPLTEntryForSymbol(symName);
@@ -753,8 +776,10 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                     return false;
                 }
 
+#ifdef DEBUG
                 std::cout << "DEBUG: Redirected " << symName << " to PLT entry at 0x"
                           << std::hex << pltAddr << std::dec << std::endl;
+#endif
             }
 
             continue;
@@ -778,8 +803,10 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
 
             // 将重定位目标设置为 GOT 条目地址
             targetAddr = gotAddr;
+#ifdef DEBUG
             std::cout << "DEBUG: R_AARCH64_ADR_GOT_PAGE for symbol: " << symName
                       << ", GOT addr=0x" << std::hex << gotAddr << std::dec << std::endl;
+#endif
         }
         // 处理 R_AARCH64_LD64_GOT_LO12_NC
         else if (type == 312) {  // R_AARCH64_LD64_GOT_LO12_NC
@@ -799,8 +826,10 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
 
             // 将重定位目标设置为 GOT 条目地址
             targetAddr = gotAddr;
+#ifdef DEBUG
             std::cout << "DEBUG: R_AARCH64_LD64_GOT_LO12_NC for symbol: " << symName
                       << ", GOT addr=0x" << std::hex << gotAddr << std::dec << std::endl;
+#endif
         }
         // 处理其他重定位类型
         else {
@@ -843,8 +872,10 @@ bool MinimalJITLinker::link(const char* objectData, size_t objectSize, uint64_t 
         return false;
     }
 
+#ifdef DEBUG
     std::cout << "DEBUG: Required memory size = " << totalSize << " bytes" << std::endl;
     std::cout << "DEBUG: Preferred address = 0x" << std::hex << baseAddress << std::dec << std::endl;
+#endif
 
     // 2. 分配内存
     if (!allocateMemory(totalSize, baseAddress)) {
