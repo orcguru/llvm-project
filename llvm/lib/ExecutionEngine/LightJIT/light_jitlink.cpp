@@ -695,11 +695,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
             if (sym->st_shndx != SHN_UNDEF) {
                 auto symSection = parser.getSectionHeader(sym->st_shndx);
                 if (symSection) {
-                    if (symSection->sh_type == 8) {  // SHT_NOBITS (.bss)
-                        return baseAddr + symSection->sh_addr + symValue;
-                    } else {
-                        return baseAddr + symValue;
-                    }
+                    return baseAddr + symSection->sh_addr + symValue;
                 } else {
                     fprintf(stderr, "ERROR: Cannot find section for symbol: %s\n", symName);
                     return 0;
