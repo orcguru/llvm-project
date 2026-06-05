@@ -93,8 +93,18 @@ struct AArch64PLTEntry {
     uint32_t padding; // 填充，使结构为16字节对齐
 };
 
+// 添加架构类型定义
+enum class ArchType {
+    Unknown,
+    AArch64,
+    RISCV64
+};
+
 // 简化的链接上下文
 struct JITContext {
+    // 架构类型
+    ArchType TargetArch = ArchType::Unknown;
+
     // 符号表
     std::unordered_map<std::string, uint64_t> SymbolTable;
     
@@ -143,6 +153,7 @@ public:
     uint64_t getEntryPoint() const;
     const char* getData() const;
     size_t getSize() const;
+    Elf64_Half getMachineType() const;
 };
 
 // 极简链接器
@@ -178,6 +189,8 @@ private:
     uint64_t getPLTEntryForSymbol(const std::string& symbolName);
     uint64_t getGOTEntryForSymbol(const std::string& symbolName, uint64_t targetAddr);
     void generatePLTEntry(uint64_t pltAddr, uint64_t gotAddr, size_t slotIndex);
+    void generateRISCVPLTEntry(uint64_t pltAddr, uint64_t gotAddr, size_t slotIndex);
+    void detectArchitecture(const MinimalELF64Parser& parser);
 
     void printMemoryLayout(const MinimalELF64Parser& parser);
     void printSectionsInfo(const MinimalELF64Parser& parser);
