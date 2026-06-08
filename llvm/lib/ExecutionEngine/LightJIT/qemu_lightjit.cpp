@@ -6,7 +6,7 @@
 #include <sys/mman.h>
 #include <iostream>
 
-//#define DEBUG
+#define DEBUG
 
 // 定义 helper 函数结构
 typedef struct helper_func {

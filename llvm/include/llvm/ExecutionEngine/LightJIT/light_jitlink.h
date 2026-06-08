@@ -73,6 +73,13 @@ struct Elf64_Rela {
 #define ELF64_R_SYM(i) ((i) >> 32)
 #define ELF64_R_TYPE(i) ((i) & 0xffffffffL)
 
+// 在 light_jitlink.h 的 JITContext 结构中添加
+struct Hi20RelocationInfo {
+    uint64_t hi20TargetAddr;  // HI20 重定位的目标地址
+    uint64_t hi20RelocAddr;   // HI20 重定位的地址
+    int64_t hi20Addend;       // HI20 重定位的加数
+};
+
 struct GOTEntryInfo {
     uint64_t gotAddr;      // GOT条目的地址
     uint64_t slotIndex;    // 槽位索引
@@ -133,6 +140,9 @@ struct JITContext {
     std::unordered_map<std::string, uint64_t> GotSymbolMap;  // 符号名 -> GOT 条目索引
     uint64_t NextGOTIndex = 0;
     uint64_t NextPLTIndex = 0;
+
+    // 在 JITContext 中添加
+    std::unordered_map<uint64_t, Hi20RelocationInfo> Hi20RelocationMap;
 };
 
 // 自定义的极简 ELF 解析器

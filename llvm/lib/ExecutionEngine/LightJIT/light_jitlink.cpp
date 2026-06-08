@@ -14,7 +14,7 @@
 #include <unistd.h>
 #include <iostream>
 
-//#define DEBUG
+#define DEBUG
 
 using namespace llvm;
 
@@ -253,7 +253,9 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser,
                      << ", size=" << std::dec << shdr->sh_size
                      << ", dst=0x" << std::hex << (uint64_t)dst
                      << ", memory=0x" << (uint64_t)memory
-                     << ", baseAddr=0x" << baseAddr << std::endl;
+                     << ", baseAddr=0x" << baseAddr
+                     << ", parser.getData()=0x" << (uint64_t)parser.getData()
+                     << ", shdr->sh_offset=0x" << shdr->sh_offset << std::endl;
 #endif
 
             memcpy(dst, src, shdr->sh_size);
@@ -411,6 +413,9 @@ bool MinimalJITLinker::setupPLTAndGOT() {
         Ctx.CurrentAlloc.BaseAddress = reinterpret_cast<uint64_t>(newMemory);
     }
 
+#ifdef DEBUG
+    std::cout << "Ctx.CurrentAlloc.BaseAddress:" << std::hex << Ctx.CurrentAlloc.BaseAddress << " Ctx.CurrentAlloc.Size:" << Ctx.CurrentAlloc.Size << std::endl;
+#endif
     // 设置 PLT 和 GOT 地址
     uint64_t codeEnd = Ctx.CurrentAlloc.BaseAddress + (Ctx.CurrentAlloc.Size - pltSize - gotSize);
     Ctx.PLTBaseAddr = codeEnd;
@@ -492,31 +497,52 @@ uint64_t MinimalJITLinker::getGOTEntryForSymbol(const std::string& symbolName, u
     return gotAddr;
 }
 
-// 在 MinimalJITLinker 类中添加 RISC-V PLT 生成函数
+// 修改 generateRISCVPLTEntry 函数
 void MinimalJITLinker::generateRISCVPLTEntry(uint64_t pltAddr, uint64_t gotAddr, size_t slotIndex) {
-    // RISC-V PLT 条目的典型布局：
+    // RISC-V PLT 条目的新布局（使用 t2 寄存器）：
     // 1. auipc t2, %pcrel_hi(got_entry)
-    // 2. ld t1, %pcrel_lo(got_entry)(t2)
-    // 3. jr t1
+    // 2. ld    t2, %pcrel_lo(got_entry)(t2)
+    // 3. jr    t2
 
     // 计算 GOT 条目相对于 PLT 条目的偏移
     int64_t offset = gotAddr - pltAddr;
 
     // 1. auipc t2, hi20
+    // 计算高20位偏移
     int32_t hi20 = ((offset + 0x800) >> 12) & 0xFFFFF;
-    uint32_t auipc_instr = 0x00003e17;  // auipc t3, 0
-    auipc_instr |= (hi20 << 12);
 
-    // 2. ld t1, lo12
+    // auipc 指令编码：imm[31:12] | rd | 0010111
+    // 寄存器 t2 的编号是 7
+    // 基础指令：auipc t2, 0 = 0x00000397
+    uint32_t auipc_instr = 0x00000397;  // auipc t2, 0
+    auipc_instr &= ~(0xFFFFF000);  // 清除立即数字段
+    auipc_instr |= (hi20 & 0xFFFFF) << 12;  // 设置 hi20 立即数
+
+    // 2. ld t2, lo12(t2)
+    // 计算低12位偏移
     int32_t lo12 = offset & 0xFFF;
     if (lo12 >= 0x800) {
-        lo12 -= 0x1000;
+        lo12 -= 0x1000;  // 符号扩展
     }
-    uint32_t ld_instr = 0x000e3303;  // ld t1, 0(t3)
-    ld_instr |= (lo12 << 20);
 
-    // 3. jr t1
-    uint32_t jr_instr = 0x00030067;  // jr t1
+    // ld 指令编码：imm[11:0] | rs1 | 011 | rd | 0000011
+    // 对于 ld 指令，funct3 = 011
+    // rs1 = t2 (7), rd = t2 (7)
+    uint32_t ld_instr = 0x0003b303;  // ld t1, 0(t1) 的编码，但我们需要改为 t2
+    // 清除并设置正确的寄存器字段
+    ld_instr &= ~(0xFFF00000);  // 清除立即数字段
+    ld_instr &= ~(0x1F << 15);  // 清除 rs1 字段
+    ld_instr &= ~(0x1F << 7);   // 清除 rd 字段
+    ld_instr |= (lo12 & 0xFFF) << 20;  // 设置立即数字段
+    ld_instr |= (7 << 15);  // 设置 rs1 = t2 (7)
+    ld_instr |= (7 << 7);   // 设置 rd = t2 (7)
+    // funct3 已经是 011，opcode 是 0000011
+
+    // 3. jr t2
+    // jr 是伪指令，实际上是 jalr x0, rs1, 0
+    // 编码：imm[11:0] | rs1 | 000 | rd | 1100111
+    // 对于 jr t2: rd = 0 (x0), rs1 = 7 (t2), imm = 0
+    uint32_t jr_instr = 0x00038067;  // jalr x0, t2, 0
 
     // 将指令写入内存
     char* pltLocation = Ctx.CurrentAlloc.Memory + (pltAddr - Ctx.CurrentAlloc.BaseAddress);
@@ -527,6 +553,15 @@ void MinimalJITLinker::generateRISCVPLTEntry(uint64_t pltAddr, uint64_t gotAddr,
 
     // RISC-V PLT 条目通常是 16 字节对齐
     *reinterpret_cast<uint32_t*>(pltLocation + 12) = 0;  // 填充
+
+#ifdef DEBUG
+    std::cout << "DEBUG: Generated RISC-V PLT entry at 0x" << std::hex << pltAddr
+              << " (slot " << std::dec << slotIndex << "):" << std::endl;
+    std::cout << "  auipc t2, 0x" << std::hex << hi20 << std::endl;
+    std::cout << "  ld    t2, 0x" << std::hex << (lo12 & 0xFFF) << "(t2)" << std::endl;
+    std::cout << "  jr    t2" << std::endl;
+    std::cout << "  (GOT entry at 0x" << std::hex << gotAddr << ")" << std::dec << std::endl;
+#endif
 }
 
 void MinimalJITLinker::generatePLTEntry(uint64_t pltAddr, uint64_t gotAddr, size_t slotIndex) {
@@ -661,6 +696,11 @@ bool MinimalJITLinker::applyRelocation(uint32_t type, char* location,
     int64_t page_shifted;
     int64_t hi20, lo12;
     uint32_t val32;
+    uint32_t original_jump_instr;
+    uint32_t opcode;
+    uint32_t funct3;
+    uint32_t rd;
+    uint32_t rs1;
 
     switch (type) {
     // --- Existing AArch64 relocations ---
@@ -735,18 +775,41 @@ bool MinimalJITLinker::applyRelocation(uint32_t type, char* location,
         *reinterpret_cast<uint32_t*>(location) = result;
         break;
 
-    // 在 applyRelocation 函数中，确保RISC-V重定位类型常量是正确的：
     case 35: // R_RISCV_ADD32
         // 计算 32 位值：S + A
         val32 = static_cast<uint32_t>(value);
         // 写入 32 位值
         *reinterpret_cast<uint32_t*>(location) = val32;
+#ifdef DEBUG
+        std::cout << "DEBUG: R_RISCV_ADD32 applyRelocation:" << std::endl
+                  << "  location=0x" << std::hex << reinterpret_cast<uint64_t>(location) << std::endl
+                  << "  targetAddr=0x" << targetAddr << std::endl
+                  << "  addend=0x" << addend << std::endl
+                  << "  value=0x" << value << std::endl
+                  << "  val32=0x" << val32 << std::endl
+                  << "  relocAddr=0x" << relocAddr << std::endl
+                  << "  relocOffset=0x" << relocOffset << std::endl
+                  << "  instruction before: 0x" << (*reinterpret_cast<uint32_t*>(location)) << std::endl
+                  << "  instruction after: 0x" << val32 << std::dec << std::endl;
+#endif
         break;
 
     case 39: // R_RISCV_SUB32
         // 计算 32 位值：S - A
         val32 = static_cast<uint32_t>(targetAddr - addend);
         *reinterpret_cast<uint32_t*>(location) = val32;
+#ifdef DEBUG
+        std::cout << "DEBUG: R_RISCV_SUB32 applyRelocation:" << std::endl
+                  << "  location=0x" << std::hex << reinterpret_cast<uint64_t>(location) << std::endl
+                  << "  targetAddr=0x" << targetAddr << std::endl
+                  << "  addend=0x" << addend << std::endl
+                  << "  value=0x" << (targetAddr - addend) << std::endl
+                  << "  val32=0x" << val32 << std::endl
+                  << "  relocAddr=0x" << relocAddr << std::endl
+                  << "  relocOffset=0x" << relocOffset << std::endl
+                  << "  instruction before: 0x" << (*reinterpret_cast<uint32_t*>(location)) << std::endl
+                  << "  instruction after: 0x" << val32 << std::dec << std::endl;
+#endif
         break;
 
     case 19: // R_RISCV_CALL_PLT
@@ -763,24 +826,83 @@ bool MinimalJITLinker::applyRelocation(uint32_t type, char* location,
             return false;
         }
         
-        // 编码 auipc 指令
+        // 编码 auipc 指令，使用 t2 作为临时寄存器
         // auipc 指令格式：imm[31:12] | rd | 0010111
         hi20 = (branch_offset + 0x800) >> 12;
-        instr = 0x00001797;  // auipc a5, 0
+        
+        // auipc t2, hi20
+        // t2 的寄存器编号是 7
+        // 基础指令编码：auipc t2, 0 = 0x00000397
+        instr = 0x00000397;  // auipc t2, 0
         instr &= ~(0xFFFFF000);  // 清除立即数字段
         instr |= (hi20 & 0xFFFFF) << 12;
         *reinterpret_cast<uint32_t*>(location) = instr;
         
-        // 编码 jalr 指令
-        // jalr 指令格式：imm[11:0] | rs1 | 000 | rd | 1100111
-        lo12 = branch_offset & 0xFFF;
-        if (lo12 >= 0x800) {
-            lo12 -= 0x1000;  // 符号扩展
+        // 获取原始跳转指令
+        original_jump_instr = *reinterpret_cast<uint32_t*>(location + 4);
+        
+        // 提取操作码和功能码
+        opcode = original_jump_instr & 0x7F;
+        funct3 = (original_jump_instr >> 12) & 0x7;
+        rd = (original_jump_instr >> 7) & 0x1F;
+        rs1 = (original_jump_instr >> 15) & 0x1F;
+        
+        // 检查原始指令是否是 jr 或 jalr
+        if (opcode == 0x67) {  // jalr 指令的操作码
+            if (funct3 == 0x0) {  // jalr 的功能码
+                // 检查原始指令是 jr 还是 jalr
+                // jr 是 jalr x0, rs1, offset
+                // jalr 是 jalr rd, rs1, offset (rd != 0)
+                
+                if (rd == 0) {
+                    // 原始指令是 jr
+                    // 创建 jr 指令：jalr x0, t2, offset
+                    // x0 的寄存器编号是 0，t2 的编号是 7
+                    lo12 = branch_offset & 0xFFF;
+                    if (lo12 >= 0x800) {
+                        lo12 -= 0x1000;  // 符号扩展
+                    }
+                    
+                    // jr 指令编码：jalr x0, t2, offset
+                    // 基础编码：jalr x0, t2, 0 = 0x00038067
+                    instr = 0x00038067;  // jalr x0, t2, 0
+                    instr &= ~(0xFFF00000);  // 清除立即数字段
+                    instr |= (lo12 & 0xFFF) << 20;  // 设置立即数字段
+                    *reinterpret_cast<uint32_t*>(location + 4) = instr;
+                    
+#ifdef DEBUG
+                    std::cout << "DEBUG: R_RISCV_CALL_PLT: using jr instruction" << std::endl;
+#endif
+                } else {
+                    // 原始指令是 jalr
+                    // 创建 jalr 指令：jalr rd, t2, offset
+                    // 保持原始指令的 rd
+                    lo12 = branch_offset & 0xFFF;
+                    if (lo12 >= 0x800) {
+                        lo12 -= 0x1000;  // 符号扩展
+                    }
+                    
+                    // jalr 指令编码：imm[11:0] | rs1(5 bits) | funct3(3 bits) | rd(5 bits) | opcode(7 bits)
+                    // 基础编码：jalr rd, t2, 0
+                    // 其中 rd 保持原始值，rs1 = 7 (t2)
+                    instr = 0x00000067;  // 基础 jalr 指令
+                    instr |= (lo12 & 0xFFF) << 20;  // 设置立即数字段
+                    instr |= (7 << 15);  // 设置 rs1 = t2 (7)
+                    instr |= (rd << 7);  // 设置 rd
+                    *reinterpret_cast<uint32_t*>(location + 4) = instr;
+                    
+#ifdef DEBUG
+                    std::cout << "DEBUG: R_RISCV_CALL_PLT: using jalr instruction with rd=" << rd << std::endl;
+#endif
+                }
+            } else {
+                fprintf(stderr, "ERROR: R_RISCV_CALL_PLT: invalid funct3 in original jalr instruction: 0x%x\n", funct3);
+                return false;
+            }
+        } else {
+            fprintf(stderr, "ERROR: R_RISCV_CALL_PLT: original instruction is not jr or jalr (opcode=0x%x)\n", opcode);
+            return false;
         }
-        instr = 0x000780e7;  // jalr ra, a5, 0
-        instr &= ~(0xFFF00000);  // 清除立即数字段
-        instr |= (lo12 & 0xFFF) << 20;
-        *reinterpret_cast<uint32_t*>(location + 4) = instr;
         break;
 
     case 20: // R_RISCV_GOT_HI20
@@ -825,11 +947,13 @@ bool MinimalJITLinker::applyRelocation(uint32_t type, char* location,
     case 24: // R_RISCV_PCREL_LO12_I
         // 计算 PC 相对偏移的低 12 位
         // 公式：%pcrel_lo(label)
-        // 注意：这个重定位引用之前的一个 R_RISCV_PCREL_HI20 重定位
-        // 我们需要找到对应的 HI20 重定位计算的值
+        // 注意：value 已经在 processRelocations 中计算为 hi20Total
+        // 我们需要计算 HI20 总目标相对于当前位置的偏移
         
-        // 简化：我们假设 HI20 已经在同一位置计算了相同的偏移
+        // 计算 HI20 总目标相对于 LO12 位置的偏移
         branch_offset = value - relocAddr;
+        
+        // 取低12位
         lo12 = branch_offset & 0xFFF;
         
         // 对立即数进行符号扩展调整
@@ -843,6 +967,16 @@ bool MinimalJITLinker::applyRelocation(uint32_t type, char* location,
         // 设置立即数字段
         instr |= (lo12 & 0xFFF) << 20;
         *reinterpret_cast<uint32_t*>(location) = instr;
+        
+#ifdef DEBUG
+        std::cout << "DEBUG: R_RISCV_PCREL_LO12_I applyRelocation: " << std::hex
+                  << " branch_offset=0x" << branch_offset
+                  << ", value=0x" << value
+                  << ", relocAddr=0x" << relocAddr
+                  << ", lo12=0x" << lo12
+                  << ", targetAddr=0x" << targetAddr
+                  << ", addend=0x" << addend << std::endl;
+#endif
         break;
 
     default:
@@ -856,6 +990,9 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                        Elf64_Shdr* relocShdr,
                        char* memory,
                        uint64_t baseAddr) {
+#ifdef DEBUG
+    std::cout << "DEBUG: processRelocations baseAddr:0x" << std::hex << baseAddr << std::endl;
+#endif
     const char* relocData = parser.getData() + relocShdr->sh_offset;
     size_t relocCount = relocShdr->sh_size / sizeof(Elf64_Rela);
 
@@ -875,6 +1012,19 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
         return false;
     }
     const char* strtab = parser.getData() + strtabShdr->sh_offset;
+
+    // 获取重定位节对应的目标节
+    // 重定位节的sh_info字段指向被重定位的节
+    auto targetShdr = parser.getSectionHeader(relocShdr->sh_info);
+    if (!targetShdr) {
+        fprintf(stderr, "ERROR: Cannot find target section for relocation section\n");
+        return false;
+    }
+
+#ifdef DEBUG
+    std::cout << "DEBUG: Relocation section targets section at address: 0x"
+              << std::hex << targetShdr->sh_addr << std::dec << std::endl;
+#endif
 
     for (size_t i = 0; i < relocCount; i++) {
         const Elf64_Rela* rela = reinterpret_cast<const Elf64_Rela*>(
@@ -906,13 +1056,32 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                 if (it != Ctx.SymbolTable.end()) {
                     return it->second;
                 } else {
+                    // 对于局部标签（如 .Lpcrel_hi1），它们通常定义在当前文件中
+                    // 我们需要计算标签的地址
+                    if (sym->st_shndx != SHN_UNDEF) {
+                        // 标签定义在当前文件中
+                        auto labelSection = parser.getSectionHeader(sym->st_shndx);
+                        if (labelSection) {
+                            uint64_t labelAddr = baseAddr + labelSection->sh_addr + symValue;
+#ifdef DEBUG
+                            std::cout << "DEBUG: Local label " << symName
+                                      << " at section " << sym->st_shndx
+                                      << ", offset=0x" << std::hex << symValue
+                                      << ", addr=0x" << labelAddr << std::dec << std::endl;
+#endif
+                            return labelAddr;
+                        }
+                    }
                     fprintf(stderr, "ERROR: Undefined symbol: %s\n", symName);
                     return 0;
                 }
             }
         };
 
-        // 在 processRelocations 函数中，找到处理 R_RISCV_CALL_PLT 的部分，将其修改为：
+        // 计算重定位位置
+        uint64_t location = baseAddr + targetShdr->sh_addr + rela->r_offset;
+        char* locPtr = memory + targetShdr->sh_addr + rela->r_offset;
+
         // 处理 R_RISCV_CALL_PLT
         if (type == 19) {  // R_RISCV_CALL_PLT
             // 计算目标地址
@@ -923,13 +1092,11 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
             }
 
             // 计算分支偏移
-            uint64_t location = baseAddr + rela->r_offset;
             int64_t branch_offset = targetAddr + rela->r_addend - location;
 
             // 检查是否在范围内 (±2GB)
             if (branch_offset >= -(1LL << 31) && branch_offset < (1LL << 31)) {
                 // 在范围内，直接应用重定位
-                char* locPtr = memory + rela->r_offset;
                 if (!applyRelocation(type, locPtr, targetAddr,
                                    rela->r_addend, location, rela->r_offset)) {
                     fprintf(stderr, "ERROR: Failed to apply relocation type %u for symbol %s\n", type, symName);
@@ -938,8 +1105,8 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
             } else {
                 // 超出范围，使用 PLT
 #ifdef DEBUG
-                std::cout << "DEBUG: R_RISCV_CALL_PLT for symbol " << symName 
-                          << " is out of range (0x" << std::hex << branch_offset 
+                std::cout << "DEBUG: R_RISCV_CALL_PLT for symbol " << symName
+                          << " is out of range (0x" << std::hex << branch_offset
                           << "), using PLT" << std::dec << std::endl;
 #endif
 
@@ -951,7 +1118,6 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                 }
 
                 // 应用重定位到 PLT 条目
-                char* locPtr = memory + rela->r_offset;
                 if (!applyRelocation(type, locPtr, pltAddr,
                                    rela->r_addend, location, rela->r_offset)) {
                     fprintf(stderr, "ERROR: Failed to apply PLT relocation for symbol: %s\n", symName);
@@ -965,7 +1131,6 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
             }
             continue;
         }
-        // 在 processRelocations 函数中，修正RISC-V重定位处理：
         // 处理 R_RISCV_ADD32
         else if (type == 35) {  // R_RISCV_ADD32
             targetAddr = calculateSymbolAddress();
@@ -973,6 +1138,26 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                 fprintf(stderr, "ERROR: Failed to calculate address for symbol: %s\n", symName);
                 return false;
             }
+            
+#ifdef DEBUG
+            std::cout << "DEBUG: R_RISCV_ADD32 for symbol: " << symName << std::endl
+                      << "  sym->st_shndx: " << sym->st_shndx << std::endl
+                      << "  sym->st_value: 0x" << std::hex << sym->st_value << std::endl
+                      << "  targetAddr calculated: 0x" << targetAddr << std::endl
+                      << "  location: 0x" << location << std::endl
+                      << "  locPtr: 0x" << reinterpret_cast<uint64_t>(locPtr) << std::endl
+                      << "  rela->r_offset: 0x" << rela->r_offset << std::endl
+                      << "  rela->r_addend: 0x" << rela->r_addend << std::endl
+                      << "  value to write (targetAddr + addend): 0x" << (targetAddr + rela->r_addend) << std::dec << std::endl;
+#endif
+
+            // 应用重定位
+            if (!applyRelocation(type, locPtr, targetAddr,
+                               rela->r_addend, location, rela->r_offset)) {
+                fprintf(stderr, "ERROR: Failed to apply R_RISCV_ADD32 for symbol: %s\n", symName);
+                return false;
+            }
+            continue;
         }
         // 处理 R_RISCV_SUB32
         else if (type == 39) {  // R_RISCV_SUB32
@@ -981,6 +1166,26 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                 fprintf(stderr, "ERROR: Failed to calculate address for symbol: %s\n", symName);
                 return false;
             }
+            
+#ifdef DEBUG
+            std::cout << "DEBUG: R_RISCV_SUB32 for symbol: " << symName << std::endl
+                      << "  sym->st_shndx: " << sym->st_shndx << std::endl
+                      << "  sym->st_value: 0x" << std::hex << sym->st_value << std::endl
+                      << "  targetAddr calculated: 0x" << targetAddr << std::endl
+                      << "  location: 0x" << location << std::endl
+                      << "  locPtr: 0x" << reinterpret_cast<uint64_t>(locPtr) << std::endl
+                      << "  rela->r_offset: 0x" << rela->r_offset << std::endl
+                      << "  rela->r_addend: 0x" << rela->r_addend << std::endl
+                      << "  value to write (targetAddr - addend): 0x" << (targetAddr - rela->r_addend) << std::dec << std::endl;
+#endif
+
+            // 应用重定位
+            if (!applyRelocation(type, locPtr, targetAddr,
+                               rela->r_addend, location, rela->r_offset)) {
+                fprintf(stderr, "ERROR: Failed to apply R_RISCV_SUB32 for symbol: %s\n", symName);
+                return false;
+            }
+            continue;
         }
         // 处理 R_RISCV_GOT_HI20
         else if (type == 20) {  // R_RISCV_GOT_HI20
@@ -1000,27 +1205,155 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
 
             // 将重定位目标设置为 GOT 条目地址
             targetAddr = gotAddr;
+
+            // 存储 HI20 重定位信息，供 LO12 使用
+            // 注意：对于 R_RISCV_GOT_HI20，我们存储 GOT 条目地址
+            Hi20RelocationInfo hi20Info;
+            hi20Info.hi20TargetAddr = gotAddr;  // 存储 GOT 条目地址
+            hi20Info.hi20RelocAddr = location;
+            hi20Info.hi20Addend = rela->r_addend;
+            Ctx.Hi20RelocationMap[location] = hi20Info;
+
+            // 应用重定位
+            if (!applyRelocation(type, locPtr, targetAddr,
+                               rela->r_addend, location, rela->r_offset)) {
+                fprintf(stderr, "ERROR: Failed to apply R_RISCV_GOT_HI20 for symbol: %s\n", symName);
+                return false;
+            }
+
 #ifdef DEBUG
-            std::cout << "DEBUG: R_RISCV_GOT_HI20 for symbol: " << symName
-                      << ", GOT addr=0x" << std::hex << gotAddr << std::dec << std::endl;
+            std::cout << "DEBUG: R_RISCV_GOT_HI20 at location=0x" << std::hex << location
+                      << " for symbol: " << symName
+                      << ", GOT addr=0x" << gotAddr
+                      << ", addend=0x" << rela->r_addend << std::dec << std::endl;
 #endif
+            continue;
         }
         // 处理 R_RISCV_PCREL_HI20
         else if (type == 23) {  // R_RISCV_PCREL_HI20
+            // 计算目标地址
             targetAddr = calculateSymbolAddress();
             if (targetAddr == 0) {
                 fprintf(stderr, "ERROR: Failed to calculate address for symbol: %s\n", symName);
                 return false;
             }
+
+            // 存储 HI20 重定位信息
+            Hi20RelocationInfo hi20Info;
+            hi20Info.hi20TargetAddr = targetAddr;
+            hi20Info.hi20RelocAddr = location;
+            hi20Info.hi20Addend = rela->r_addend;
+
+            // 使用 uint64_t 类型的 location 作为键
+            Ctx.Hi20RelocationMap[location] = hi20Info;
+
+            // 应用重定位
+            if (!applyRelocation(type, locPtr, targetAddr,
+                               rela->r_addend, location, rela->r_offset)) {
+                fprintf(stderr, "ERROR: Failed to apply R_RISCV_PCREL_HI20 for symbol: %s\n", symName);
+                return false;
+            }
+
+#ifdef DEBUG
+            std::cout << "DEBUG: R_RISCV_PCREL_HI20 at location=0x" << std::hex << location
+                      << " for symbol: " << symName
+                      << ", targetAddr=0x" << targetAddr
+                      << ", addend=0x" << rela->r_addend << std::dec << std::endl;
+#endif
+            continue;
         }
         // 处理 R_RISCV_PCREL_LO12_I
         else if (type == 24) {  // R_RISCV_PCREL_LO12_I
-            // 这个重定位需要与之前的 R_RISCV_PCREL_HI20 配对
-            targetAddr = calculateSymbolAddress();
-            if (targetAddr == 0) {
-                fprintf(stderr, "ERROR: Failed to calculate address for symbol: %s\n", symName);
+            // 对于 LO12，符号名是标签（如 .Lpcrel_hi1 / .Lpcrel_hi184）
+            // 我们需要找到这个标签对应的 HI20 重定位信息
+            //
+            // 关键理解：
+            //   R_RISCV_PCREL_LO12_I 的 fixup 公式是：
+            //     imm = ((S + A) - addr_of_pairing_HI20) [11:0]
+            //
+            //   S = 符号真实地址 (helper_cpuid 的 GOT 条目地址, 或 data symbol 的地址)
+            //   A = r_addend (通常为 0)
+            //   addr_of_pairing_HI20 = 标签地址 = HI20 那条 auipc 指令本身的地址
+            //
+            //   LO12 指令自己的地址根本不参与这个公式！
+
+            // 计算标签的地址 (= HI20 指令的地址)
+            uint64_t labelAddr = calculateSymbolAddress();
+            if (labelAddr == 0) {
+                fprintf(stderr, "ERROR: Failed to calculate address for label: %s\n", symName);
                 return false;
             }
+
+#ifdef DEBUG
+            std::cout << "DEBUG: R_RISCV_PCREL_LO12_I for label: " << symName
+                      << ", labelAddr/HI20_addr=0x" << std::hex << labelAddr
+                      << ", LO12_location=0x" << location
+                      << ", delta=" << (int64_t)(location - labelAddr) << std::dec << std::endl;
+#endif
+
+            // 在 HI20 映射中查找对应的 HI20 重定位信息
+            // labelAddr should be the exact address of the pairing HI20 instruction
+            auto hi20It = Ctx.Hi20RelocationMap.find(labelAddr);
+            if (hi20It == Ctx.Hi20RelocationMap.end()) {
+                // relaxed search: the label sometimes has a slightly different
+                // resolved address due to how we computed it vs. how the HI20 stored it
+                for (const auto& entry : Ctx.Hi20RelocationMap) {
+                    uint64_t hi20Addr = entry.first;
+                    if (hi20Addr == labelAddr ||
+                        (labelAddr >= hi20Addr && labelAddr - hi20Addr <= 16) ||
+                        (hi20Addr >= labelAddr && hi20Addr - labelAddr <= 16)) {
+                        hi20It = Ctx.Hi20RelocationMap.find(hi20Addr);
+                        goto found;
+                    }
+                }
+                fprintf(stderr,
+                    "ERROR: R_RISCV_PCREL_LO12_I without matching HI20 for label: %s "
+                    "(labelAddr=0x%lx, map_size=%zu)\n",
+                    symName, labelAddr, Ctx.Hi20RelocationMap.size());
+                return false;
+            found:;
+            }
+
+            const Hi20RelocationInfo& hi20Info = hi20It->second;
+
+            // ★★★ THE KEY FIX ★★★
+            // offset = (S + A) - addr_of_HI20_instruction
+            //         = hi20TargetAddr - hi20Info.hi20RelocAddr
+            //
+            // hi20Info.hi20RelocAddr is the HI20 instruction's address (saved when we
+            // processed the HI20)
+            // hi20Info.hi20TargetAddr is S (the real target -- either the data symbol
+            // address, or the GOT entry address for GOT_HI20)
+            // hi20Info.hi20Addend is A
+
+            int64_t full_offset = (int64_t)(hi20Info.hi20TargetAddr + hi20Info.hi20Addend)
+                                 - (int64_t)hi20Info.hi20RelocAddr;
+
+            // Extract low 12 bits with proper sign extension for the I-type immediate
+            // The I-type immediate is 12-bit signed: range [-2048, 2047] = [0xFFFFF800, 0x7FF]
+            int64_t lo12 = full_offset & 0xFFF;
+            if (lo12 & 0x800) lo12 |= ~0xFFF;  // sign extend from bit 11
+
+#ifdef DEBUG
+            std::cout << "DEBUG: R_RISCV_PCREL_LO12_I patching: "
+                      << "full_offset=0x" << std::hex << full_offset
+                      << ", lo12_imm=0x" << (uint64_t)(lo12 & 0xFFF)
+                      << " (signed " << std::dec << lo12 << ")"
+                      << std::endl;
+#endif
+
+            // Now patch the LO12 instruction in-place
+            // The LO12 instruction is at 'locPtr' / 'location'
+            // It's an I-type: [31:20] = imm[11:0], [19:15] = rs1, [14:12]=funct3, [11:7]=rd, [6:0]=opcode
+            //
+            // We need to preserve everything except the imm[11:0] field in bits [31:20]
+            uint32_t instr = *reinterpret_cast<uint32_t*>(locPtr);
+            instr &= ~(0xFFF << 20);           // clear imm[11:0] (bits 31:20)
+            instr |= ((lo12 & 0xFFF) << 20);  // set new imm[11:0]
+            *reinterpret_cast<uint32_t*>(locPtr) = instr;
+
+            // DO NOT call applyRelocation for LO12 — we've already done the fixup
+            continue;
         }
         // 处理 R_AARCH64_JUMP26 和 R_AARCH64_CALL26
         else if (type == 283 || type == 282) {  // R_AARCH64_CALL26 或 R_AARCH64_JUMP26
@@ -1032,13 +1365,11 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
             }
 
             // 计算分支偏移
-            uint64_t location = baseAddr + rela->r_offset;
             int64_t branch_offset = targetAddr + rela->r_addend - location;
 
             // 检查是否在范围内
             if (branch_offset >= -(1 << 27) && branch_offset < (1 << 27)) {
                 // 在范围内，直接应用重定位
-                char* locPtr = memory + rela->r_offset;
                 if (!applyRelocation(type, locPtr, targetAddr,
                                    rela->r_addend, location, rela->r_offset)) {
                     fprintf(stderr, "ERROR: Failed to apply relocation type %u for symbol %s\n", type, symName);
@@ -1059,7 +1390,6 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                 }
 
                 // 应用重定位到 PLT 条目
-                char* locPtr = memory + rela->r_offset;
                 if (!applyRelocation(type, locPtr, pltAddr,
                                    rela->r_addend, location, rela->r_offset)) {
                     fprintf(stderr, "ERROR: Failed to apply PLT relocation type %u for symbol %s\n", type, symName);
@@ -1092,10 +1422,19 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
 
             // 将重定位目标设置为 GOT 条目地址
             targetAddr = gotAddr;
+
+            // 应用重定位
+            if (!applyRelocation(type, locPtr, targetAddr,
+                               rela->r_addend, location, rela->r_offset)) {
+                fprintf(stderr, "ERROR: Failed to apply R_AARCH64_ADR_GOT_PAGE for symbol: %s\n", symName);
+                return false;
+            }
+
 #ifdef DEBUG
             std::cout << "DEBUG: R_AARCH64_ADR_GOT_PAGE for symbol: " << symName
                       << ", GOT addr=0x" << std::hex << gotAddr << std::dec << std::endl;
 #endif
+            continue;
         }
         // 处理 R_AARCH64_LD64_GOT_LO12_NC
         else if (type == 312) {  // R_AARCH64_LD64_GOT_LO12_NC
@@ -1115,10 +1454,19 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
 
             // 将重定位目标设置为 GOT 条目地址
             targetAddr = gotAddr;
+
+            // 应用重定位
+            if (!applyRelocation(type, locPtr, targetAddr,
+                               rela->r_addend, location, rela->r_offset)) {
+                fprintf(stderr, "ERROR: Failed to apply R_AARCH64_LD64_GOT_LO12_NC for symbol: %s\n", symName);
+                return false;
+            }
+
 #ifdef DEBUG
             std::cout << "DEBUG: R_AARCH64_LD64_GOT_LO12_NC for symbol: " << symName
                       << ", GOT addr=0x" << std::hex << gotAddr << std::dec << std::endl;
 #endif
+            continue;
         }
         // 处理其他重定位类型
         else {
@@ -1128,16 +1476,13 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                 fprintf(stderr, "ERROR: Failed to calculate address for symbol: %s\n", symName);
                 return false;
             }
-        }
 
-        // Apply relocation
-        uint64_t location = baseAddr + rela->r_offset;
-        char* locPtr = memory + rela->r_offset;
-
-        if (!applyRelocation(type, locPtr, targetAddr,
-                           rela->r_addend, location, rela->r_offset)) {
-            fprintf(stderr, "ERROR: Failed to apply relocation type %u for symbol %s\n", type, symName);
-            return false;
+            // 应用重定位
+            if (!applyRelocation(type, locPtr, targetAddr,
+                               rela->r_addend, location, rela->r_offset)) {
+                fprintf(stderr, "ERROR: Failed to apply relocation type %u for symbol %s\n", type, symName);
+                return false;
+            }
         }
     }
 
