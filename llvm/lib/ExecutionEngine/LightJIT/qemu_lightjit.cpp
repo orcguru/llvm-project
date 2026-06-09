@@ -6,7 +6,7 @@
 #include <sys/mman.h>
 #include <iostream>
 
-#define DEBUG
+//#define DEBUG
 
 // 定义 helper 函数结构
 typedef struct helper_func {
@@ -263,7 +263,7 @@ uint64_t invoke_lightlink(const char *AotFile,
         return 1;
     }
 #else
-    if (jit_link_aot(ctx, file_data, size, 0, &regions, &region_count, 0, NULL) == 0) {
+    if (jit_link_aot(ctx, file_data, size, 0, &regions, &region_count, StartCode, register_mapping) == 0) {
         if (log_message) {
             log_message("ERROR: Failed to link AOT file");
         }

@@ -14,7 +14,7 @@
 #include <unistd.h>
 #include <iostream>
 
-#define DEBUG
+//#define DEBUG
 
 using namespace llvm;
 
@@ -776,40 +776,49 @@ bool MinimalJITLinker::applyRelocation(uint32_t type, char* location,
         break;
 
     case 35: // R_RISCV_ADD32
-        // 计算 32 位值：S + A
-        val32 = static_cast<uint32_t>(value);
-        // 写入 32 位值
-        *reinterpret_cast<uint32_t*>(location) = val32;
+        // 计算公式：新值 = 原始值 + 符号地址 + 加数
+        {
+            uint32_t original_val = *reinterpret_cast<uint32_t*>(location);
+            int64_t new_val = static_cast<int64_t>(original_val) + 
+                             static_cast<int64_t>(targetAddr) + addend;
+            val32 = static_cast<uint32_t>(new_val);
+            *reinterpret_cast<uint32_t*>(location) = val32;
+            
 #ifdef DEBUG
-        std::cout << "DEBUG: R_RISCV_ADD32 applyRelocation:" << std::endl
-                  << "  location=0x" << std::hex << reinterpret_cast<uint64_t>(location) << std::endl
-                  << "  targetAddr=0x" << targetAddr << std::endl
-                  << "  addend=0x" << addend << std::endl
-                  << "  value=0x" << value << std::endl
-                  << "  val32=0x" << val32 << std::endl
-                  << "  relocAddr=0x" << relocAddr << std::endl
-                  << "  relocOffset=0x" << relocOffset << std::endl
-                  << "  instruction before: 0x" << (*reinterpret_cast<uint32_t*>(location)) << std::endl
-                  << "  instruction after: 0x" << val32 << std::dec << std::endl;
+            std::cout << "DEBUG: R_RISCV_ADD32 applyRelocation:" << std::endl
+                      << "  location=0x" << std::hex << reinterpret_cast<uint64_t>(location) << std::endl
+                      << "  targetAddr=0x" << targetAddr << std::endl
+                      << "  addend=0x" << addend << std::endl
+                      << "  original_val=0x" << original_val << std::endl
+                      << "  new_val=0x" << new_val << std::endl
+                      << "  val32=0x" << val32 << std::endl
+                      << "  relocAddr=0x" << relocAddr << std::endl
+                      << "  relocOffset=0x" << relocOffset << std::dec << std::endl;
 #endif
+        }
         break;
 
     case 39: // R_RISCV_SUB32
-        // 计算 32 位值：S - A
-        val32 = static_cast<uint32_t>(targetAddr - addend);
-        *reinterpret_cast<uint32_t*>(location) = val32;
+        // 计算公式：新值 = 原始值 - 符号地址 - 加数
+        {
+            uint32_t original_val = *reinterpret_cast<uint32_t*>(location);
+            int64_t new_val = static_cast<int64_t>(original_val) - 
+                             static_cast<int64_t>(targetAddr) - addend;
+            val32 = static_cast<uint32_t>(new_val);
+            *reinterpret_cast<uint32_t*>(location) = val32;
+            
 #ifdef DEBUG
-        std::cout << "DEBUG: R_RISCV_SUB32 applyRelocation:" << std::endl
-                  << "  location=0x" << std::hex << reinterpret_cast<uint64_t>(location) << std::endl
-                  << "  targetAddr=0x" << targetAddr << std::endl
-                  << "  addend=0x" << addend << std::endl
-                  << "  value=0x" << (targetAddr - addend) << std::endl
-                  << "  val32=0x" << val32 << std::endl
-                  << "  relocAddr=0x" << relocAddr << std::endl
-                  << "  relocOffset=0x" << relocOffset << std::endl
-                  << "  instruction before: 0x" << (*reinterpret_cast<uint32_t*>(location)) << std::endl
-                  << "  instruction after: 0x" << val32 << std::dec << std::endl;
+            std::cout << "DEBUG: R_RISCV_SUB32 applyRelocation:" << std::endl
+                      << "  location=0x" << std::hex << reinterpret_cast<uint64_t>(location) << std::endl
+                      << "  targetAddr=0x" << targetAddr << std::endl
+                      << "  addend=0x" << addend << std::endl
+                      << "  original_val=0x" << original_val << std::endl
+                      << "  new_val=0x" << new_val << std::endl
+                      << "  val32=0x" << val32 << std::endl
+                      << "  relocAddr=0x" << relocAddr << std::endl
+                      << "  relocOffset=0x" << relocOffset << std::dec << std::endl;
 #endif
+        }
         break;
 
     case 19: // R_RISCV_CALL_PLT
