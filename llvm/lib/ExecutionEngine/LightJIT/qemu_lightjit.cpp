@@ -49,7 +49,9 @@ uint64_t jit_link_aot(jit_context_t* ctx,
                      jit_memory_region** allocated_regions,
                      size_t* region_count,
                      uint64_t startCode,
-                     void (*register_mapping)(uint64_t, uint64_t, uint64_t)
+                     void (*register_mapping)(uint64_t, uint64_t, uint64_t),
+                     void (*log_message)(const char *),
+                     const char *AotFile
                      ) {
     if (!ctx || !aot_data || aot_size == 0) {
         return 0;
@@ -60,7 +62,7 @@ uint64_t jit_link_aot(jit_context_t* ctx,
 
     // 执行链接
     if (!linker.link(static_cast<const char*>(aot_data),
-                     aot_size, base_address, startCode, register_mapping)) {
+                     aot_size, base_address, startCode, register_mapping, log_message, AotFile)) {
         return 0;
     }
 
@@ -121,7 +123,7 @@ uint64_t jit_link_aot_with_helpers(jit_context_t* ctx,
 
     // 执行链接
     if (!linker.link(static_cast<const char*>(aot_data),
-                     aot_size, base_address, 0, NULL)) {
+                     aot_size, base_address, 0, NULL, NULL, NULL)) {
         return 0;
     }
 
@@ -253,7 +255,7 @@ uint64_t invoke_lightlink(const char *AotFile,
     size_t region_count = 0;
 
 #ifndef DEBUG
-    if (jit_link_aot(ctx, file_data, size, 0, &regions, &region_count, StartCode, register_mapping) == 0) {
+    if (jit_link_aot(ctx, file_data, size, 0, &regions, &region_count, StartCode, register_mapping, log_message, AotFile) == 0) {
         if (log_message) {
             log_message("ERROR: Failed to link AOT file");
         }
@@ -263,7 +265,7 @@ uint64_t invoke_lightlink(const char *AotFile,
         return 1;
     }
 #else
-    if (jit_link_aot(ctx, file_data, size, 0, &regions, &region_count, StartCode, register_mapping) == 0) {
+    if (jit_link_aot(ctx, file_data, size, 0, &regions, &region_count, StartCode, register_mapping, log_message, AotFile) == 0) {
         if (log_message) {
             log_message("ERROR: Failed to link AOT file");
         }

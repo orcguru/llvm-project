@@ -178,7 +178,9 @@ public:
     // 主链接函数
     bool link(const char* objectData, size_t objectSize, uint64_t baseAddress,
               uint64_t startCode,
-              void (*register_mapping)(uint64_t, uint64_t, uint64_t)
+              void (*register_mapping)(uint64_t, uint64_t, uint64_t),
+              void (*log_message)(const char *),
+              const char *AotFile
               );
     
 private:
@@ -187,7 +189,9 @@ private:
     void buildSymbolTable(const MinimalELF64Parser& parser);
     bool copySectionsAndRelocate(const MinimalELF64Parser& parser,
                                 uint64_t startCode,
-                                void (*register_mapping)(uint64_t, uint64_t, uint64_t));
+                                void (*register_mapping)(uint64_t, uint64_t, uint64_t),
+                                void (*log_message)(const char *),
+                                const char *AotFile);
     bool processRelocations(const MinimalELF64Parser& parser,
                            struct Elf64_Shdr* relocShdr,
                            char* memory,

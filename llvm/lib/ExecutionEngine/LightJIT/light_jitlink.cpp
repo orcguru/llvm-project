@@ -8,11 +8,15 @@
 #include "llvm/Support/Format.h"
 #include "llvm/ADT/StringRef.h"
 
+#include "llvm/ADT/SmallString.h"
+#include "llvm/Support/raw_ostream.h"
+
 #include <memory>
 #include <cstring>
 #include <sys/mman.h>
 #include <unistd.h>
 #include <iostream>
+#include <string>
 
 //#define DEBUG
 
@@ -199,7 +203,9 @@ void MinimalJITLinker::buildSymbolTable(const MinimalELF64Parser& parser) {
 
 bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser,
                                               uint64_t startCode,
-                                              void (*register_mapping)(uint64_t, uint64_t, uint64_t)) {
+                                              void (*register_mapping)(uint64_t, uint64_t, uint64_t),
+                                              void (*log_message)(const char *),
+                                              const char *AotFile) {
     char* memory = Ctx.CurrentAlloc.Memory;
     uint64_t baseAddr = Ctx.CurrentAlloc.BaseAddress;
 
@@ -305,6 +311,14 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser,
 
             // 将 NOBITS 节的内存清零
             memset(dst, 0, shdr->sh_size);
+
+            if (log_message) {
+                llvm::SmallString<256> bss_log;
+                llvm::raw_svector_ostream os(bss_log);
+
+                os << AotFile << " .bss start:" << llvm::format_hex((uint64_t)dst, 0) << " length:" << llvm::format_hex(shdr->sh_size, 0) << "\n";
+                log_message(bss_log.c_str());
+            }
         }
     }
 
@@ -1517,7 +1531,9 @@ void MinimalJITLinker::detectArchitecture(const MinimalELF64Parser& parser) {
 
 bool MinimalJITLinker::link(const char* objectData, size_t objectSize, uint64_t baseAddress,
                             uint64_t startCode,
-                            void (*register_mapping)(uint64_t, uint64_t, uint64_t)
+                            void (*register_mapping)(uint64_t, uint64_t, uint64_t),
+                            void (*log_message)(const char *),
+                            const char *AotFile
                             ) {
     MinimalELF64Parser parser(objectData, objectSize);
     if (!parser.isValid()) {
@@ -1559,7 +1575,7 @@ bool MinimalJITLinker::link(const char* objectData, size_t objectSize, uint64_t 
     buildSymbolTable(parser);
 
     // 5. 复制节并处理重定位
-    if (!copySectionsAndRelocate(parser, startCode, register_mapping)) {
+    if (!copySectionsAndRelocate(parser, startCode, register_mapping, log_message, AotFile)) {
         fprintf(stderr, "ERROR:Failed to copy sections and relocate\n");
         return false;
     }
