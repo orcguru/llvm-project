@@ -51,7 +51,8 @@ uint64_t jit_link_aot(jit_context_t* ctx,
                      uint64_t startCode,
                      void (*register_mapping)(uint64_t, uint64_t, uint64_t),
                      void (*log_message)(const char *),
-                     const char *AotFile
+                     const char *AotFile,
+                     void *(*g_malloc0)(uint64_t)
                      ) {
     if (!ctx || !aot_data || aot_size == 0) {
         return 0;
@@ -62,7 +63,7 @@ uint64_t jit_link_aot(jit_context_t* ctx,
 
     // 执行链接
     if (!linker.link(static_cast<const char*>(aot_data),
-                     aot_size, base_address, startCode, register_mapping, log_message, AotFile)) {
+                     aot_size, base_address, startCode, register_mapping, log_message, AotFile, g_malloc0)) {
         return 0;
     }
 
@@ -123,7 +124,7 @@ uint64_t jit_link_aot_with_helpers(jit_context_t* ctx,
 
     // 执行链接
     if (!linker.link(static_cast<const char*>(aot_data),
-                     aot_size, base_address, 0, NULL, NULL, NULL)) {
+                     aot_size, base_address, 0, NULL, NULL, NULL, NULL)) {
         return 0;
     }
 
@@ -195,6 +196,7 @@ uint64_t invoke_lightlink(const char *AotFile,
                          void (*register_mapping)(uint64_t, uint64_t, uint64_t),
                          void (*log_mapping)(const char *, uint64_t),
                          void (*log_message)(const char *),
+                         void *(*g_malloc0)(uint64_t),
                          void *HelperFuncs,
                          size_t HelperFuncsCnt,
                          int enable_llvm_debug,
@@ -255,7 +257,7 @@ uint64_t invoke_lightlink(const char *AotFile,
     size_t region_count = 0;
 
 #ifndef DEBUG
-    if (jit_link_aot(ctx, file_data, size, 0, &regions, &region_count, StartCode, register_mapping, log_message, AotFile) == 0) {
+    if (jit_link_aot(ctx, file_data, size, 0, &regions, &region_count, StartCode, register_mapping, log_message, AotFile, g_malloc0) == 0) {
         if (log_message) {
             log_message("ERROR: Failed to link AOT file");
         }
@@ -265,7 +267,7 @@ uint64_t invoke_lightlink(const char *AotFile,
         return 1;
     }
 #else
-    if (jit_link_aot(ctx, file_data, size, 0, &regions, &region_count, StartCode, register_mapping, log_message, AotFile) == 0) {
+    if (jit_link_aot(ctx, file_data, size, 0, &regions, &region_count, StartCode, register_mapping, log_message, AotFile, g_malloc0) == 0) {
         if (log_message) {
             log_message("ERROR: Failed to link AOT file");
         }
@@ -274,98 +276,6 @@ uint64_t invoke_lightlink(const char *AotFile,
         jit_free_regions(regions, region_count);
         return 1;
     }
-
-#if 0
-    // 5. 解析 ELF 符号表，处理函数映射
-    MinimalELF64Parser parser(file_data, size);
-    if (parser.isValid()) {
-        // 查找符号表
-        for (size_t i = 0; ; i++) {
-            auto shdr = parser.getSectionHeader(i);
-            if (!shdr) break;
-
-            if (shdr->sh_type == SHT_SYMTAB) {
-                const char* symtabData = parser.getData() + shdr->sh_offset;
-                size_t symCount = shdr->sh_size / sizeof(Elf64_Sym);
-
-                // 查找关联的字符串表
-                auto strtabShdr = parser.getSectionHeader(shdr->sh_link);
-                if (!strtabShdr) continue;
-                const char* strtab = parser.getData() + strtabShdr->sh_offset;
-
-                // 计算基地址偏移
-                uint64_t baseAddr = ctx->impl.CurrentAlloc.BaseAddress;
-
-                for (size_t j = 0; j < symCount; j++) {
-                    const Elf64_Sym* sym = reinterpret_cast<const Elf64_Sym*>(
-                        symtabData + j * sizeof(Elf64_Sym));
-
-                    if (sym->st_name == 0) continue; // 无名符号
-
-                    const char* symName = strtab + sym->st_name;
-
-                    // 检查是否为函数符号（简单检查：有定义且不为0）
-                    if (sym->st_shndx == 1) {
-                        // 计算函数在内存中的地址
-                        uint64_t funcAddr = 0;
-
-                        if (sym->st_shndx < parser.getSize() / sizeof(Elf64_Shdr)) {
-                            auto symSection = parser.getSectionHeader(sym->st_shndx);
-                            if (symSection) {
-                                // 计算函数地址
-                                funcAddr = baseAddr + sym->st_value;
-                            }
-                        }
-
-                        if (funcAddr != 0) {
-                            // 检查函数名是否符合模式 *_func_[0-9a-f]+
-                            std::string nameStr(symName);
-                            std::regex pattern(".*_func_[0-9a-f]+$", std::regex_constants::icase);
-
-                            if (std::regex_match(nameStr, pattern)) {
-                                // 提取尾部的十六进制数
-                                size_t funcPos = nameStr.rfind("_func_");
-                                if (funcPos != std::string::npos) {
-                                    std::string hexStr = nameStr.substr(funcPos + 6);
-                                    char* endptr;
-                                    uint64_t hexNum = strtoull(hexStr.c_str(), &endptr, 16);
-
-                                    if (endptr != hexStr.c_str() && *endptr == '\0') {
-                                        // 有效的十六进制数
-                                        if (register_mapping) {
-                                            register_mapping(StartCode, hexNum, funcAddr);
-                                            /*
-                                            if (log_message) {
-                                                std::stringstream msg;
-                                                msg << "Registered mapping: " << nameStr
-                                                    << " (0x" << std::hex << hexNum << std::dec
-                                                    << ") -> 0x" << std::hex << funcAddr
-                                                    << " baseAddr: 0x" << baseAddr << " + sym->st_value: 0x" << sym->st_value << std::endl;
-                                                log_message(msg.str().c_str());
-                                            }
-                                            */
-                                        }
-                                    } else {
-                                        // 不是有效的十六进制数，使用 log_mapping
-                                        if (log_mapping) {
-                                            log_mapping(symName, funcAddr);
-                                        }
-                                    }
-                                }
-                            } else {
-                                // 不符合模式，使用 log_mapping
-                                if (log_mapping) {
-                                    log_mapping(symName, funcAddr);
-                                }
-                            }
-                        }
-                    }
-                }
-                break;
-            }
-        }
-    }
-#endif
 #endif
 
     delete[] file_data;

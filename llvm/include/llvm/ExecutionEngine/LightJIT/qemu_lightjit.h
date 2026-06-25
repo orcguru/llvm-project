@@ -52,7 +52,8 @@ uint64_t jit_link_aot(jit_context_t* ctx,
                      uint64_t startCode,
                      void (*register_mapping)(uint64_t, uint64_t, uint64_t),
                      void (*log_message)(const char *),
-                     const char *AotFile
+                     const char *AotFile,
+                     void *(*g_malloc0)(uint64_t)
                      );
 
 // In qemu_lightjit.h (add this declaration)

@@ -205,7 +205,8 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser,
                                               uint64_t startCode,
                                               void (*register_mapping)(uint64_t, uint64_t, uint64_t),
                                               void (*log_message)(const char *),
-                                              const char *AotFile) {
+                                              const char *AotFile,
+                                              void *(*g_malloc0)(uint64_t)) {
     char* memory = Ctx.CurrentAlloc.Memory;
     uint64_t baseAddr = Ctx.CurrentAlloc.BaseAddress;
 
@@ -229,13 +230,23 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser,
 
     uint64_t *funcmap_ptr = NULL;
     size_t funcmap_size = 0;
+    uint64_t x64_exec_end = 0;
+    int progbits_cnt = 0;
+    uint64_t host_exec_start = 0;
+    uint64_t host_exec_size = 0;
     // 首先复制所有 PROGBITS 段
     for (size_t i = 0; ; i++) {
         auto shdr = parser.getSectionHeader(i);
         if (!shdr) break;
 
         if (shdr->sh_type == 1 && shdr->sh_size > 0) { // SHT_PROGBITS
+            progbits_cnt += 1;
             const char* src = parser.getData() + shdr->sh_offset;
+            // FIXME: the second SHT_PROGBITS section is .rodata
+            if (progbits_cnt == 2) {
+                uint64_t *ptr = (uint64_t *)(parser.getData() + shdr->sh_offset);
+                x64_exec_end = *ptr;
+            }
 
             // 计算内存中的正确偏移
             uint64_t offset = shdr->sh_addr - lowestAddr;
@@ -252,6 +263,11 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser,
             }
 
             char* dst = memory + offset;
+            // FIXME: the first section is .text
+            if (progbits_cnt == 1) {
+                host_exec_start = (uint64_t)dst;
+                host_exec_size = shdr->sh_size;
+            }
 
 #ifdef DEBUG
             std::cout << "DEBUG: Copying PROGBITS section at addr=0x" << std::hex << shdr->sh_addr
@@ -274,6 +290,7 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser,
             }
         }
     }
+    assert(x64_exec_end != 0);
 
     if (register_mapping) {
         assert(funcmap_ptr);
@@ -311,6 +328,31 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser,
 
             // 将 NOBITS 节的内存清零
             memset(dst, 0, shdr->sh_size);
+
+            // Setup shadow_map
+            volatile uint64_t *x64_elf_exec_start = (uint64_t *)dst;
+            volatile uint64_t *x64_elf_exec_end = (uint64_t *)(dst + 8);
+            volatile uint64_t *host_exec_start_ptr = (uint64_t *)(dst + 16);
+            volatile uint64_t *aux_array_ptr = (uint64_t *)(dst + 24);
+            *x64_elf_exec_start = startCode;
+            *x64_elf_exec_end = (startCode + x64_exec_end);
+            *host_exec_start_ptr = host_exec_start;
+
+            uint64_t aux_limit = (host_exec_size >> 3) + 1;
+            uint64_t *aux_array = (uint64_t *)g_malloc0(8 + aux_limit);
+            assert(aux_array);
+            *aux_array_ptr = (uint64_t)aux_array;
+            aux_array[0] = aux_limit;
+            uint8_t *bit_array = (uint8_t *)&aux_array[1];
+            assert(funcmap_ptr);
+            for (size_t i = 0; i < funcmap_size/sizeof(uint64_t); ++i) {
+                uint64_t entry = funcmap_ptr[i];
+                uint64_t aot_func_offset = ((entry >> 32) & 0xffffffff);
+                uint64_t aot_func_offset_idx = aot_func_offset/8;
+                uint8_t shift = (uint8_t)(aot_func_offset % 8);
+                assert(aot_func_offset_idx < aux_limit);
+                bit_array[aot_func_offset_idx] |= (1 << shift);
+            }
 
             if (log_message) {
                 llvm::SmallString<256> bss_log;
@@ -1533,7 +1575,8 @@ bool MinimalJITLinker::link(const char* objectData, size_t objectSize, uint64_t 
                             uint64_t startCode,
                             void (*register_mapping)(uint64_t, uint64_t, uint64_t),
                             void (*log_message)(const char *),
-                            const char *AotFile
+                            const char *AotFile,
+                            void *(*g_malloc0)(uint64_t)
                             ) {
     MinimalELF64Parser parser(objectData, objectSize);
     if (!parser.isValid()) {
@@ -1575,7 +1618,7 @@ bool MinimalJITLinker::link(const char* objectData, size_t objectSize, uint64_t 
     buildSymbolTable(parser);
 
     // 5. 复制节并处理重定位
-    if (!copySectionsAndRelocate(parser, startCode, register_mapping, log_message, AotFile)) {
+    if (!copySectionsAndRelocate(parser, startCode, register_mapping, log_message, AotFile, g_malloc0)) {
         fprintf(stderr, "ERROR:Failed to copy sections and relocate\n");
         return false;
     }

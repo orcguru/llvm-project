@@ -180,7 +180,8 @@ public:
               uint64_t startCode,
               void (*register_mapping)(uint64_t, uint64_t, uint64_t),
               void (*log_message)(const char *),
-              const char *AotFile
+              const char *AotFile,
+              void *(*g_malloc0)(uint64_t)
               );
     
 private:
@@ -191,7 +192,9 @@ private:
                                 uint64_t startCode,
                                 void (*register_mapping)(uint64_t, uint64_t, uint64_t),
                                 void (*log_message)(const char *),
-                                const char *AotFile);
+                                const char *AotFile,
+                                void *(*g_malloc0)(uint64_t)
+                                );
     bool processRelocations(const MinimalELF64Parser& parser,
                            struct Elf64_Shdr* relocShdr,
                            char* memory,
