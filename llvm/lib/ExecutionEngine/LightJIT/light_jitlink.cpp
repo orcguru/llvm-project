@@ -267,6 +267,13 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser,
             if (progbits_cnt == 1) {
                 host_exec_start = (uint64_t)dst;
                 host_exec_size = shdr->sh_size;
+                if (log_message) {
+                    llvm::SmallString<256> text_log;
+                    llvm::raw_svector_ostream os(text_log);
+
+                    os << AotFile << " .text start:" << llvm::format_hex(host_exec_start, 0) << " length:" << llvm::format_hex(host_exec_size, 0) << "\n";
+                    log_message(text_log.c_str());
+                }
             }
 
 #ifdef DEBUG
