@@ -338,11 +338,11 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser,
 
             // Setup shadow_map
             volatile uint64_t *x64_elf_exec_start = (uint64_t *)dst;
-            volatile uint64_t *x64_elf_exec_end = (uint64_t *)(dst + 8);
+            volatile uint64_t *x64_delta_end = (uint64_t *)(dst + 8);
             volatile uint64_t *host_exec_start_ptr = (uint64_t *)(dst + 16);
             volatile uint64_t *aux_array_ptr = (uint64_t *)(dst + 24);
             *x64_elf_exec_start = startCode;
-            *x64_elf_exec_end = (startCode + x64_exec_end);
+            *x64_delta_end = x64_exec_end;
             *host_exec_start_ptr = host_exec_start;
 
             uint64_t aux_limit = (host_exec_size >> 3) + 1;
