@@ -17,6 +17,8 @@
 #include <unistd.h>
 #include <iostream>
 #include <string>
+#include <stdint.h>
+#include <stddef.h>
 
 //#define DEBUG
 
@@ -201,12 +203,55 @@ void MinimalJITLinker::buildSymbolTable(const MinimalELF64Parser& parser) {
     }
 }
 
+// 红黑树节点结构（必须与Perl脚本中的pack格式完全匹配）
+typedef struct {
+    uint32_t left;      // 左子节点索引
+    uint32_t right;     // 右子节点索引
+    uint8_t  color;     // 0=BLACK, 1=RED
+    uint8_t  _pad[3];   // 对齐填充
+    uint64_t key;       // Guest PC
+    uint64_t value;     // 代码偏移
+    uint32_t _pad2;     // 最终填充到32字节
+} __attribute__((packed, aligned(8))) RBNode;
+
+// .funcmap节头部
+typedef struct {
+    uint32_t root_index;    // 根节点索引
+    uint32_t node_count;    // 节点总数
+    RBNode nodes[];         // 柔性数组，指向节点数据
+} FuncMapSection;
+
+// 查找函数：给定guest_pc，返回代码偏移
+uint64_t lookup_function(const FuncMapSection* funcmap, uint64_t guest_pc) {
+    if (!funcmap || funcmap->root_index == 0xFFFFFFFF) {
+        return 0;  // 树为空
+    }
+    
+    uint32_t current = funcmap->root_index;
+    
+    while (current != 0xFFFFFFFF) {
+        const RBNode* node = &funcmap->nodes[current];
+        
+        if (guest_pc == node->key) {
+            return node->value;  // 找到！
+        } else if (guest_pc < node->key) {
+            current = node->left;
+        } else {
+            current = node->right;
+        }
+    }
+    
+    return 0;  // 未找到
+}
+
 bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser,
                                               uint64_t startCode,
                                               void (*register_mapping)(uint64_t, uint64_t, uint64_t),
                                               void (*log_message)(const char *),
                                               const char *AotFile,
-                                              void *(*g_malloc0)(uint64_t)) {
+                                              void *(*g_malloc0)(uint64_t),
+                                              uint64_t *aot_code_base_ptr,
+                                              uint64_t *funcmap_rbtree_root_ptr) {
     char* memory = Ctx.CurrentAlloc.Memory;
     uint64_t baseAddr = Ctx.CurrentAlloc.BaseAddress;
 
@@ -299,14 +344,30 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser,
     }
     assert(x64_exec_end != 0);
 
+//#define FUNCMAP_ARRAY
+#define FUNCMAP_RBTREE
     if (register_mapping) {
         assert(funcmap_ptr);
+#if defined(FUNCMAP_ARRAY)
         for (size_t i = 0; i < funcmap_size/sizeof(uint64_t); ++i) {
             uint64_t entry = funcmap_ptr[i];
             uint64_t func_hex = (entry & 0xffffffff);
             uint64_t host_addr = (uint64_t)memory + ((entry >> 32) & 0xffffffff);
             register_mapping(startCode, func_hex, host_addr);
         }
+#elif defined(FUNCMAP_RBTREE)
+        *aot_code_base_ptr = (uint64_t)memory;
+        *funcmap_rbtree_root_ptr = (uint64_t)funcmap_ptr;
+#ifdef DEBUG_FIX_FUNCMAP
+        for (uint64_t x64di = 0; x64di < x64_exec_end; ++x64di) {
+            uint64_t host_delta = lookup_function((const FuncMapSection *)funcmap_ptr, x64di);
+            if (host_delta) {
+                uint64_t host_addr = (uint64_t)memory + host_delta;
+                register_mapping(startCode, x64di, host_addr);
+            }
+        }
+#endif
+#endif
     }
 
     // 初始化所有 NOBITS 段（如 .bss）为 0
@@ -344,22 +405,7 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser,
             *x64_elf_exec_start = startCode;
             *x64_delta_end = x64_exec_end;
             *host_exec_start_ptr = host_exec_start;
-
-            uint64_t aux_limit = (host_exec_size >> 3) + 1;
-            uint64_t *aux_array = (uint64_t *)g_malloc0(8 + aux_limit);
-            assert(aux_array);
-            *aux_array_ptr = (uint64_t)aux_array;
-            aux_array[0] = aux_limit;
-            uint8_t *bit_array = (uint8_t *)&aux_array[1];
-            assert(funcmap_ptr);
-            for (size_t i = 0; i < funcmap_size/sizeof(uint64_t); ++i) {
-                uint64_t entry = funcmap_ptr[i];
-                uint64_t aot_func_offset = ((entry >> 32) & 0xffffffff);
-                uint64_t aot_func_offset_idx = aot_func_offset/8;
-                uint8_t shift = (uint8_t)(aot_func_offset % 8);
-                assert(aot_func_offset_idx < aux_limit);
-                bit_array[aot_func_offset_idx] |= (1 << shift);
-            }
+            *aux_array_ptr = 0;
 
             if (log_message) {
                 llvm::SmallString<256> bss_log;
@@ -1583,8 +1629,9 @@ bool MinimalJITLinker::link(const char* objectData, size_t objectSize, uint64_t 
                             void (*register_mapping)(uint64_t, uint64_t, uint64_t),
                             void (*log_message)(const char *),
                             const char *AotFile,
-                            void *(*g_malloc0)(uint64_t)
-                            ) {
+                            void *(*g_malloc0)(uint64_t),
+                            uint64_t *aot_code_base_ptr,
+                            uint64_t *funcmap_rbtree_root_ptr) {
     MinimalELF64Parser parser(objectData, objectSize);
     if (!parser.isValid()) {
         fprintf(stderr, "ERROR:Invalid ELF file\n");
@@ -1625,7 +1672,7 @@ bool MinimalJITLinker::link(const char* objectData, size_t objectSize, uint64_t 
     buildSymbolTable(parser);
 
     // 5. 复制节并处理重定位
-    if (!copySectionsAndRelocate(parser, startCode, register_mapping, log_message, AotFile, g_malloc0)) {
+    if (!copySectionsAndRelocate(parser, startCode, register_mapping, log_message, AotFile, g_malloc0, aot_code_base_ptr, funcmap_rbtree_root_ptr)) {
         fprintf(stderr, "ERROR:Failed to copy sections and relocate\n");
         return false;
     }

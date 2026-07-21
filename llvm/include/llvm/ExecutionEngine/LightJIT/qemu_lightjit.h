@@ -53,7 +53,9 @@ uint64_t jit_link_aot(jit_context_t* ctx,
                      void (*register_mapping)(uint64_t, uint64_t, uint64_t),
                      void (*log_message)(const char *),
                      const char *AotFile,
-                     void *(*g_malloc0)(uint64_t)
+                     void *(*g_malloc0)(uint64_t),
+                     uint64_t *aot_code_base_ptr,
+                     uint64_t *funcmap_rbtree_root_ptr
                      );
 
 // In qemu_lightjit.h (add this declaration)

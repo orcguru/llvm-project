@@ -52,8 +52,9 @@ uint64_t jit_link_aot(jit_context_t* ctx,
                      void (*register_mapping)(uint64_t, uint64_t, uint64_t),
                      void (*log_message)(const char *),
                      const char *AotFile,
-                     void *(*g_malloc0)(uint64_t)
-                     ) {
+                     void *(*g_malloc0)(uint64_t),
+                     uint64_t *aot_code_base_ptr,
+                     uint64_t *funcmap_rbtree_root_ptr) {
     if (!ctx || !aot_data || aot_size == 0) {
         return 0;
     }
@@ -63,7 +64,7 @@ uint64_t jit_link_aot(jit_context_t* ctx,
 
     // 执行链接
     if (!linker.link(static_cast<const char*>(aot_data),
-                     aot_size, base_address, startCode, register_mapping, log_message, AotFile, g_malloc0)) {
+                     aot_size, base_address, startCode, register_mapping, log_message, AotFile, g_malloc0, aot_code_base_ptr, funcmap_rbtree_root_ptr)) {
         return 0;
     }
 
@@ -124,7 +125,7 @@ uint64_t jit_link_aot_with_helpers(jit_context_t* ctx,
 
     // 执行链接
     if (!linker.link(static_cast<const char*>(aot_data),
-                     aot_size, base_address, 0, NULL, NULL, NULL, NULL)) {
+                     aot_size, base_address, 0, NULL, NULL, NULL, NULL, NULL, NULL)) {
         return 0;
     }
 
@@ -200,7 +201,9 @@ uint64_t invoke_lightlink(const char *AotFile,
                          void *HelperFuncs,
                          size_t HelperFuncsCnt,
                          int enable_llvm_debug,
-                         const char *entry) {
+                         const char *entry,
+                         uint64_t *aot_code_base_ptr,
+                         uint64_t *funcmap_rbtree_root_ptr) {
     // 验证输入参数
     if (!AotFile) {
         if (log_message) {
@@ -257,7 +260,7 @@ uint64_t invoke_lightlink(const char *AotFile,
     size_t region_count = 0;
 
 #ifndef DEBUG
-    if (jit_link_aot(ctx, file_data, size, 0, &regions, &region_count, StartCode, register_mapping, log_message, AotFile, g_malloc0) == 0) {
+    if (jit_link_aot(ctx, file_data, size, 0, &regions, &region_count, StartCode, register_mapping, log_message, AotFile, g_malloc0, aot_code_base_ptr, funcmap_rbtree_root_ptr) == 0) {
         if (log_message) {
             log_message("ERROR: Failed to link AOT file");
         }
@@ -267,7 +270,7 @@ uint64_t invoke_lightlink(const char *AotFile,
         return 1;
     }
 #else
-    if (jit_link_aot(ctx, file_data, size, 0, &regions, &region_count, StartCode, register_mapping, log_message, AotFile, g_malloc0) == 0) {
+    if (jit_link_aot(ctx, file_data, size, 0, &regions, &region_count, StartCode, register_mapping, log_message, AotFile, g_malloc0, aot_code_base_ptr, funcmap_rbtree_root_ptr) == 0) {
         if (log_message) {
             log_message("ERROR: Failed to link AOT file");
         }
