@@ -279,10 +279,12 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser,
     int progbits_cnt = 0;
     uint64_t host_exec_start = 0;
     uint64_t host_exec_size = 0;
+    uint64_t *shadow_map_ptr = 0;
     // 首先复制所有 PROGBITS 段
     for (size_t i = 0; ; i++) {
         auto shdr = parser.getSectionHeader(i);
         if (!shdr) break;
+        auto shdr_next = parser.getSectionHeader(i+1);
 
         if (shdr->sh_type == 1 && shdr->sh_size > 0) { // SHT_PROGBITS
             progbits_cnt += 1;
@@ -308,6 +310,11 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser,
             }
 
             char* dst = memory + offset;
+            if (shdr_next && shdr_next->sh_type == 8 && shdr_next->sh_size > 0) {
+                // If next section is .bss, then current is .data, and shadow_map_ptr is located at the head
+                shadow_map_ptr = (uint64_t *)dst;
+            }
+
             // FIXME: the first section is .text
             if (progbits_cnt == 1) {
                 host_exec_start = (uint64_t)dst;
@@ -386,6 +393,8 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser,
             }
 
             char* dst = memory + offset;
+            // Set the address of shadow_map into shadow_map_ptr located in previous section
+            *shadow_map_ptr = (uint64_t)dst;
 
 #ifdef DEBUG
             std::cout << "DEBUG: Zeroing NOBITS section at addr=0x" << std::hex << shdr->sh_addr
