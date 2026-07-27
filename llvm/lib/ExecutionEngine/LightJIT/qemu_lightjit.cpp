@@ -5,6 +5,10 @@
 #include <cstdio>
 #include <sys/mman.h>
 #include <iostream>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <assert.h>
 
 //#define DEBUG
 
@@ -212,28 +216,12 @@ uint64_t invoke_lightlink(const char *AotFile,
         return 1;
     }
 
-    // 1. 读取 ELF 文件
-    std::ifstream file(AotFile, std::ios::binary | std::ios::ate);
-    if (!file.is_open()) {
-        if (log_message) {
-            std::string msg = "ERROR: Cannot open file: " + std::string(AotFile);
-            log_message(msg.c_str());
-        }
-        return 1;
-    }
-
-    std::streamsize size = file.tellg();
-    file.seekg(0, std::ios::beg);
-
-    char* file_data = new char[size];
-    if (!file.read(file_data, size)) {
-        if (log_message) {
-            std::string msg = "ERROR: Cannot read file: " + std::string(AotFile);
-            log_message(msg.c_str());
-        }
-        delete[] file_data;
-        return 1;
-    }
+    int fd = open(AotFile, O_RDONLY);
+    assert(fd != -1);
+    struct stat st;
+    fstat(fd, &st);
+    void *file_data = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    assert(file_data);
 
     // 2. 创建 JIT 上下文
     jit_context_t* ctx = jit_context_create();
@@ -241,7 +229,8 @@ uint64_t invoke_lightlink(const char *AotFile,
         if (log_message) {
             log_message("ERROR: Failed to create JIT context");
         }
-        delete[] file_data;
+        munmap(file_data, st.st_size);
+        close(fd);
         return 1;
     }
 
@@ -260,28 +249,31 @@ uint64_t invoke_lightlink(const char *AotFile,
     size_t region_count = 0;
 
 #ifndef DEBUG
-    if (jit_link_aot(ctx, file_data, size, 0, &regions, &region_count, StartCode, register_mapping, log_message, AotFile, g_malloc0, aot_code_base_ptr, funcmap_rbtree_root_ptr) == 0) {
+    if (jit_link_aot(ctx, file_data, st.st_size, 0, &regions, &region_count, StartCode, register_mapping, log_message, AotFile, g_malloc0, aot_code_base_ptr, funcmap_rbtree_root_ptr) == 0) {
         if (log_message) {
             log_message("ERROR: Failed to link AOT file");
         }
         jit_context_destroy(ctx);
-        delete[] file_data;
+        munmap(file_data, st.st_size);
+        close(fd);
         jit_free_regions(regions, region_count);
         return 1;
     }
 #else
-    if (jit_link_aot(ctx, file_data, size, 0, &regions, &region_count, StartCode, register_mapping, log_message, AotFile, g_malloc0, aot_code_base_ptr, funcmap_rbtree_root_ptr) == 0) {
+    if (jit_link_aot(ctx, file_data, st.st_size, 0, &regions, &region_count, StartCode, register_mapping, log_message, AotFile, g_malloc0, aot_code_base_ptr, funcmap_rbtree_root_ptr) == 0) {
         if (log_message) {
             log_message("ERROR: Failed to link AOT file");
         }
         jit_context_destroy(ctx);
-        delete[] file_data;
+        munmap(file_data, st.st_size);
+        close(fd);
         jit_free_regions(regions, region_count);
         return 1;
     }
 #endif
 
-    delete[] file_data;
+    munmap(file_data, st.st_size);
+    close(fd);
     jit_free_regions(regions, region_count);
 
     return 0;

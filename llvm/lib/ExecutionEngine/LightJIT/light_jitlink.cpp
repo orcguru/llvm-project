@@ -403,9 +403,6 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser,
                      << ", dst=0x" << std::hex << (uint64_t)dst << std::endl;
 #endif
 
-            // 将 NOBITS 节的内存清零
-            memset(dst, 0, shdr->sh_size);
-
             // Setup shadow_map
             volatile uint64_t *x64_elf_exec_start = (uint64_t *)dst;
             volatile uint64_t *x64_delta_end = (uint64_t *)(dst + 8);
@@ -516,9 +513,6 @@ bool MinimalJITLinker::setupPLTAndGOT() {
             perror("mmap failed for PLT/GOT");
             return false;
         }
-
-        // 复制现有数据
-        memcpy(newMemory, Ctx.CurrentAlloc.Memory, Ctx.CurrentAlloc.Size);
 
         // 更新上下文
         Ctx.CurrentAlloc.Memory = static_cast<char*>(newMemory);
