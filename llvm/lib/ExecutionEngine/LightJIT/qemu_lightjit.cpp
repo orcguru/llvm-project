@@ -12,11 +12,6 @@
 
 //#define DEBUG
 
-typedef struct helper_func {
-    const char *name;
-    uint64_t addr;
-} helper_func_t;
-
 #include <regex>
 #include <fstream>
 #include <sstream>
@@ -54,7 +49,10 @@ uint64_t jit_link_aot(jit_context_t* ctx,
                      const char *AotFile,
                      void *(*g_malloc0)(uint64_t),
                      uint64_t *aot_code_base_ptr,
-                     uint64_t *funcmap_rbtree_root_ptr) {
+                     uint64_t *funcmap_rbtree_root_ptr,
+                     void *HelperFuncs,
+                     size_t HelperFuncsCnt
+                     ) {
     if (!ctx || !aot_data || aot_size == 0) {
         return 0;
     }
@@ -62,7 +60,7 @@ uint64_t jit_link_aot(jit_context_t* ctx,
     MinimalJITLinker linker(ctx->impl);
 
     if (!linker.link(static_cast<const char*>(aot_data),
-                     aot_size, base_address, startCode, register_mapping, log_message, AotFile, g_malloc0, aot_code_base_ptr, funcmap_rbtree_root_ptr)) {
+                     aot_size, base_address, startCode, register_mapping, log_message, AotFile, g_malloc0, aot_code_base_ptr, funcmap_rbtree_root_ptr, HelperFuncs, HelperFuncsCnt)) {
         return 0;
     }
 
@@ -80,77 +78,6 @@ uint64_t jit_link_aot(jit_context_t* ctx,
         *region_count = 1;
     }
     return 1;
-}
-
-uint64_t jit_link_aot_with_helpers(jit_context_t* ctx,
-                                  const void* aot_data,
-                                  size_t aot_size,
-                                  uint64_t base_address,
-                                  const char* helper_file,
-                                  jit_memory_region** allocated_regions,
-                                  size_t* region_count) {
-    if (!ctx || !aot_data || aot_size == 0) {
-        return 0;
-    }
-
-    MinimalJITLinker linker(ctx->impl);
-
-    if (helper_file) {
-        FILE* f = fopen(helper_file, "r");
-        if (f) {
-            char line[256];
-            while (fgets(line, sizeof(line), f)) {
-                char name[128];
-                uint64_t address;
-                if (sscanf(line, "%127s %lx", name, &address) == 2) {
-                    ctx->impl.SymbolTable[name] = address;
-#ifdef DEBUG
-                    std::cout << "Added helper: " << name << " = 0x"
-                              << std::hex << address << std::dec << std::endl;
-#endif
-                }
-            }
-            fclose(f);
-        } else {
-            fprintf(stderr, "ERROR: Could not open helper file: %s\n", helper_file);
-        }
-    }
-
-    if (!linker.link(static_cast<const char*>(aot_data),
-                     aot_size, base_address, 0, NULL, NULL, NULL, NULL, NULL, NULL)) {
-        return 0;
-    }
-
-    if (allocated_regions && region_count) {
-        *allocated_regions = (jit_memory_region*)malloc(
-            sizeof(jit_memory_region));
-        if (!*allocated_regions) {
-            return 0;
-        }
-
-        jit_memory_region* region = *allocated_regions;
-        region->start = ctx->impl.CurrentAlloc.Memory;
-        region->size = ctx->impl.CurrentAlloc.Size;
-        region->permissions = 7;
-        *region_count = 1;
-    }
-
-    MinimalELF64Parser parser(static_cast<const char*>(aot_data), aot_size);
-    uint64_t entry = parser.getEntryPoint();
-    return ctx->impl.CurrentAlloc.BaseAddress + entry;
-}
-
-uint64_t jit_find_symbol(jit_context_t* ctx, const char* name) {
-    if (!ctx || !name) {
-        return 0;
-    }
-
-    auto it = ctx->impl.SymbolTable.find(name);
-    if (it != ctx->impl.SymbolTable.end()) {
-        return it->second;
-    }
-
-    return 0;
 }
 
 uint64_t jit_execute(jit_context_t* ctx, uint64_t entry_point,
@@ -215,20 +142,11 @@ uint64_t invoke_lightlink(const char *AotFile,
         return 1;
     }
 
-    if (HelperFuncs && HelperFuncsCnt > 0) {
-        helper_func_t* helpers = static_cast<helper_func_t*>(HelperFuncs);
-        for (size_t i = 0; i < HelperFuncsCnt; i++) {
-            if (helpers[i].name) {
-                ctx->impl.SymbolTable[helpers[i].name] = helpers[i].addr;
-            }
-        }
-    }
-
     jit_memory_region* regions = nullptr;
     size_t region_count = 0;
 
 #ifndef DEBUG
-    if (jit_link_aot(ctx, file_data, st.st_size, 0, &regions, &region_count, StartCode, register_mapping, log_message, AotFile, g_malloc0, aot_code_base_ptr, funcmap_rbtree_root_ptr) == 0) {
+    if (jit_link_aot(ctx, file_data, st.st_size, 0, &regions, &region_count, StartCode, register_mapping, log_message, AotFile, g_malloc0, aot_code_base_ptr, funcmap_rbtree_root_ptr, HelperFuncs, HelperFuncsCnt) == 0) {
         if (log_message) {
             log_message("ERROR: Failed to link AOT file");
         }
@@ -239,7 +157,7 @@ uint64_t invoke_lightlink(const char *AotFile,
         return 1;
     }
 #else
-    if (jit_link_aot(ctx, file_data, st.st_size, 0, &regions, &region_count, StartCode, register_mapping, log_message, AotFile, g_malloc0, aot_code_base_ptr, funcmap_rbtree_root_ptr) == 0) {
+    if (jit_link_aot(ctx, file_data, st.st_size, 0, &regions, &region_count, StartCode, register_mapping, log_message, AotFile, g_malloc0, aot_code_base_ptr, funcmap_rbtree_root_ptr, HelperFuncs, HelperFuncsCnt) == 0) {
         if (log_message) {
             log_message("ERROR: Failed to link AOT file");
         }

@@ -57,11 +57,11 @@ int main(int argc, char** argv) {
     
     uint64_t entry = 0;
     if (helper_file) {
-        entry = jit_link_aot_with_helpers(ctx, file_data, st.st_size, 0,
-                                         helper_file, &regions, &region_count);
+        printf("helper_file not supported\n");
+        return 1;
     } else {
         entry = jit_link_aot(ctx, file_data, st.st_size, 0,
-                            &regions, &region_count, 0, NULL, NULL, NULL, NULL, NULL, NULL);
+                            &regions, &region_count, 0, NULL, NULL, NULL, NULL, NULL, NULL, (void *)NULL, 0);
     }
     
     if (entry == 0) {

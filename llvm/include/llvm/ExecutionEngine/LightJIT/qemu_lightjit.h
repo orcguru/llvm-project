@@ -41,16 +41,10 @@ uint64_t jit_link_aot(jit_context_t* ctx,
                      const char *AotFile,
                      void *(*g_malloc0)(uint64_t),
                      uint64_t *aot_code_base_ptr,
-                     uint64_t *funcmap_rbtree_root_ptr
+                     uint64_t *funcmap_rbtree_root_ptr,
+                     void *HelperFuncs,
+                     size_t HelperFuncsCnt
                      );
-
-uint64_t jit_link_aot_with_helpers(jit_context_t* ctx,
-                                   const void* aot_data,
-                                   size_t aot_size,
-                                   uint64_t base_address,
-                                   const char* helper_file,
-                                   jit_memory_region** allocated_regions,
-                                   size_t* region_count);
 
 uint64_t jit_find_symbol(jit_context_t* ctx, const char* name);
 

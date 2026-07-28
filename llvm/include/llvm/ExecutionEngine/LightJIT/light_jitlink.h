@@ -104,10 +104,15 @@ enum class ArchType {
 struct JITContext {
     ArchType TargetArch = ArchType::Unknown;
 
-    std::unordered_map<std::string, uint64_t> SymbolTable;
+    struct SymbolInfo {
+        uint64_t value;
+        bool resolved;
+    };
+
+    std::vector<SymbolInfo> SymbolTable;
     
     std::vector<AArch64PLTEntry> PLTEntries;
-    std::unordered_map<std::string, uint64_t> PLTSymbolMap;
+    std::vector<uint64_t> PLTSymbolMap;
     uint64_t PLTBaseAddr = 0;
     uint64_t GOTBaseAddr = 0;
     char* GOTPtr = nullptr;
@@ -124,7 +129,7 @@ struct JITContext {
     };
     std::vector<LoadedModule> Modules;
 
-    std::unordered_map<std::string, uint64_t> GotSymbolMap;
+    std::vector<uint64_t> GotSymbolMap;
     uint64_t NextGOTIndex = 0;
     uint64_t NextPLTIndex = 0;
 
@@ -166,13 +171,15 @@ public:
               const char *AotFile,
               void *(*g_malloc0)(uint64_t),
               uint64_t *aot_code_base_ptr,
-              uint64_t *funcmap_rbtree_root_ptr
+              uint64_t *funcmap_rbtree_root_ptr,
+              void *HelperFuncs,
+              size_t HelperFuncsCnt
               );
     
 private:
     size_t calculateTotalSize(const MinimalELF64Parser& parser);
     bool allocateMemory(size_t size, uint64_t preferredAddr);
-    void buildSymbolTable(const MinimalELF64Parser& parser);
+    void buildSymbolTable(const MinimalELF64Parser& parser, void *HelperFuncs, size_t HelperFuncsCnt);
     bool copySectionsAndRelocate(const MinimalELF64Parser& parser,
                                 uint64_t startCode,
                                 void (*register_mapping)(uint64_t, uint64_t, uint64_t),
@@ -190,8 +197,8 @@ private:
                         uint64_t targetAddr, int64_t addend,
                         uint64_t relocAddr, uint64_t relocOffset);
     bool setupPLTAndGOT();
-    uint64_t getPLTEntryForSymbol(const std::string& symbolName);
-    uint64_t getGOTEntryForSymbol(const std::string& symbolName, uint64_t targetAddr);
+    uint64_t getPLTEntryForSymbol(uint32_t symIndex);
+    uint64_t getGOTEntryForSymbol(uint32_t symIndex, uint64_t targetAddr);
     void generatePLTEntry(uint64_t pltAddr, uint64_t gotAddr, size_t slotIndex);
     void generateRISCVPLTEntry(uint64_t pltAddr, uint64_t gotAddr, size_t slotIndex);
     void detectArchitecture(const MinimalELF64Parser& parser);

@@ -160,34 +160,61 @@ bool MinimalJITLinker::allocateMemory(size_t size, uint64_t preferredAddr) {
     return true;
 }
 
-void MinimalJITLinker::buildSymbolTable(const MinimalELF64Parser& parser) {
-    for (size_t i = 0; i < 16; i++) {
+typedef struct helper_func {
+    const char *name;
+    uint64_t addr;
+} helper_func_t;
+
+void MinimalJITLinker::buildSymbolTable(const MinimalELF64Parser& parser, void *HelperFuncs, size_t HelperFuncsCnt) {
+    uint32_t *helpermap_ptr = NULL;
+    size_t helpermap_size = 0;
+    for (size_t i = 0; ; i++) {
         auto shdr = parser.getSectionHeader(i);
         if (!shdr) break;
 
         if (shdr->sh_type == SHT_SYMTAB) {
             const char* symtabData = parser.getData() + shdr->sh_offset;
-            size_t symCount = shdr->sh_size / sizeof(Elf64_Sym);
 
-            auto strtabShdr = parser.getSectionHeader(shdr->sh_link);
-            if (!strtabShdr) continue;
-            const char* strtab = parser.getData() + strtabShdr->sh_offset;
+            size_t symCount = shdr->sh_size / sizeof(Elf64_Sym);
+            Ctx.GotSymbolMap.resize(symCount);
+            Ctx.PLTSymbolMap.resize(symCount);
+            Ctx.SymbolTable.resize(symCount);
 
             for (size_t j = 0; j < symCount; j++) {
-                const Elf64_Sym* sym = reinterpret_cast<const Elf64_Sym*>(
-                    symtabData + j * sizeof(Elf64_Sym));
+                const Elf64_Sym* sym = reinterpret_cast<const Elf64_Sym*>( symtabData + j * sizeof(Elf64_Sym));
 
-                if (sym->st_name == 0) continue;
+                if (sym->st_shndx == SHN_UNDEF)
+                    continue;
 
-                const char* name = strtab + sym->st_name;
-                uint64_t value = sym->st_value;
+                if (sym->st_value == 0)
+                    continue;
 
-                if (value != 0 && sym->st_shndx != SHN_UNDEF) {
-                    Ctx.SymbolTable[name] = value;
-                }
+                auto symSec = parser.getSectionHeader(sym->st_shndx);
+                if (!symSec)
+                    continue;
+
+                uint64_t addr = Ctx.CurrentAlloc.BaseAddress + symSec->sh_addr + sym->st_value;
+
+                Ctx.SymbolTable[j].value = addr;
+                Ctx.SymbolTable[j].resolved = true;
             }
-            break;
+        } else if (shdr->sh_type == 1 && shdr->sh_size > 0) {
+            const char* src = parser.getData() + shdr->sh_offset;
+            helpermap_ptr = (uint32_t *)src;
+            helpermap_size = shdr->sh_size;
         }
+    }
+    assert(helpermap_ptr && HelperFuncs);
+    helper_func_t* helpers = static_cast<helper_func_t*>(HelperFuncs);
+    int totalCnt = helpermap_size/(2*sizeof(uint32_t));
+    for (int i = 0; i < totalCnt; ++i) {
+        uint32_t symIndex = helpermap_ptr[2*i];
+        uint32_t hashIndex = helpermap_ptr[2*i+1];
+        assert(symIndex < Ctx.SymbolTable.size());
+        assert(!Ctx.SymbolTable[symIndex].resolved);
+        assert(hashIndex < HelperFuncsCnt);
+        Ctx.SymbolTable[symIndex].value = helpers[hashIndex].addr;
+        Ctx.SymbolTable[symIndex].resolved = true;
     }
 }
 
@@ -259,6 +286,8 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser,
 
     uint64_t *funcmap_ptr = NULL;
     size_t funcmap_size = 0;
+    uint64_t *helpermap_ptr = NULL;
+    size_t helpermap_size = 0;
     uint64_t x64_exec_end = 0;
     int progbits_cnt = 0;
     uint64_t host_exec_start = 0;
@@ -322,8 +351,12 @@ bool MinimalJITLinker::copySectionsAndRelocate(const MinimalELF64Parser& parser,
 #endif
 
             memcpy(dst, src, shdr->sh_size);
-            funcmap_ptr = (uint64_t *)dst;
-            funcmap_size = shdr->sh_size;
+            funcmap_ptr = helpermap_ptr;
+            funcmap_size = helpermap_size;
+            helpermap_ptr = (uint64_t *)dst;
+            helpermap_size = shdr->sh_size;
+            (void)helpermap_ptr;
+            (void)helpermap_size;
 
             if (shdr->sh_flags & 4) {
                 Ctx.Modules.push_back({baseAddr + offset, shdr->sh_size});
@@ -524,15 +557,14 @@ bool MinimalJITLinker::setupPLTAndGOT() {
     return true;
 }
 
-uint64_t MinimalJITLinker::getGOTEntryForSymbol(const std::string& symbolName, uint64_t targetAddr) {
-    auto it = Ctx.GotSymbolMap.find(symbolName);
-    if (it != Ctx.GotSymbolMap.end()) {
-        uint64_t gotEntryAddr = Ctx.GOTBaseAddr + (it->second * 8);
+uint64_t MinimalJITLinker::getGOTEntryForSymbol(uint32_t symIndex, uint64_t targetAddr) {
+    if (symIndex < Ctx.GotSymbolMap.size() && Ctx.GotSymbolMap[symIndex] != 0) {
+        uint64_t gotEntryAddr = Ctx.GOTBaseAddr + (Ctx.GotSymbolMap[symIndex] * 8);
         uint64_t* gotEntries = reinterpret_cast<uint64_t*>(Ctx.GOTPtr);
-        gotEntries[it->second] = targetAddr;
+        gotEntries[Ctx.GotSymbolMap[symIndex]] = targetAddr;
 #ifdef DEBUG
-        std::cout << "DEBUG: Found existing GOT entry for symbol: " << symbolName
-                  << " at slot " << it->second
+        std::cout << "DEBUG: Found existing GOT entry for symbolIndex: " << symIndex
+                  << " at slot " << Ctx.GotSymbolMap[symIndex]
                   << ", updating value to 0x" << std::hex << targetAddr << std::dec << std::endl;
 #endif
         return gotEntryAddr;
@@ -544,12 +576,12 @@ uint64_t MinimalJITLinker::getGOTEntryForSymbol(const std::string& symbolName, u
     size_t gotEntryCount = gotSize / 8;
 
     if (slotIndex >= gotEntryCount) {
-        std::cerr << "ERROR: GOT table full, cannot allocate entry for symbol: "
-                  << symbolName << std::endl;
+        std::cerr << "ERROR: GOT table full, cannot allocate entry for symbolIndex: "
+                  << symIndex << std::endl;
         return 0;
     }
 
-    Ctx.GotSymbolMap[symbolName] = slotIndex;
+    Ctx.GotSymbolMap[symIndex] = slotIndex;
 
     uint64_t* gotEntries = reinterpret_cast<uint64_t*>(Ctx.GOTPtr);
     gotEntries[slotIndex] = targetAddr;
@@ -558,7 +590,7 @@ uint64_t MinimalJITLinker::getGOTEntryForSymbol(const std::string& symbolName, u
 
     uint64_t gotAddr = Ctx.GOTBaseAddr + (slotIndex * 8);
 #ifdef DEBUG
-    std::cout << "DEBUG: Allocated GOT entry for symbol: " << symbolName
+    std::cout << "DEBUG: Allocated GOT entry for symbolIndex: " << symIndex
               << " at 0x" << std::hex << gotAddr << std::dec
               << " (slot " << slotIndex << "), value=0x"
               << std::hex << targetAddr << std::dec << std::endl;
@@ -656,34 +688,32 @@ void MinimalJITLinker::generatePLTEntry(uint64_t pltAddr, uint64_t gotAddr, size
     }
 }
 
-uint64_t MinimalJITLinker::getPLTEntryForSymbol(const std::string& symbolName) {
-    auto it = Ctx.PLTSymbolMap.find(symbolName);
-    if (it != Ctx.PLTSymbolMap.end()) {
-        return Ctx.PLTBaseAddr + (it->second * 16);
+uint64_t MinimalJITLinker::getPLTEntryForSymbol(uint32_t symIndex) {
+    if (symIndex < Ctx.PLTSymbolMap.size() && Ctx.PLTSymbolMap[symIndex] != 0) {
+        return Ctx.PLTBaseAddr + (Ctx.PLTSymbolMap[symIndex] * 16);
     }
-
     size_t slotIndex = Ctx.NextPLTIndex;
 
     size_t pltEntryCount = 2048;
     if (slotIndex >= pltEntryCount) {
-        std::cerr << "ERROR: PLT table full, cannot allocate entry for symbol: "
-                  << symbolName << std::endl;
+        std::cerr << "ERROR: PLT table full, cannot allocate entry for symbolIndex: "
+                  << symIndex << std::endl;
         return 0;
     }
 
-    Ctx.PLTSymbolMap[symbolName] = slotIndex;
+    Ctx.PLTSymbolMap[symIndex] = slotIndex;
     Ctx.NextPLTIndex++;
 
     uint64_t symAddr = 0;
-    auto symIt = Ctx.SymbolTable.find(symbolName);
-    if (symIt != Ctx.SymbolTable.end()) {
-        symAddr = symIt->second;
+    if (symIndex < Ctx.SymbolTable.size() &&
+        Ctx.SymbolTable[symIndex].resolved) {
+        symAddr = Ctx.SymbolTable[symIndex].value;
     }
 
-    uint64_t gotAddr = getGOTEntryForSymbol(symbolName, symAddr);
+    uint64_t gotAddr = getGOTEntryForSymbol(symIndex, symAddr);
     if (gotAddr == 0) {
-        std::cerr << "ERROR: Failed to get GOT entry for symbol: "
-                  << symbolName << std::endl;
+        std::cerr << "ERROR: Failed to get GOT entry for symbolIndex: "
+                  << symIndex << std::endl;
         return 0;
     }
 
@@ -702,7 +732,7 @@ uint64_t MinimalJITLinker::getPLTEntryForSymbol(const std::string& symbolName) {
     }
 
 #ifdef DEBUG
-    std::cout << "DEBUG: Allocated PLT entry for symbol: " << symbolName
+    std::cout << "DEBUG: Allocated PLT entry for symbolIndex: " << symIndex
               << " at 0x" << std::hex << pltAddr << std::dec
               << " (slot " << slotIndex << ")"
               << ", referencing GOT entry at 0x" << std::hex << gotAddr << std::dec
@@ -1022,9 +1052,9 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                     return 0;
                 }
             } else {
-                auto it = Ctx.SymbolTable.find(symName);
-                if (it != Ctx.SymbolTable.end()) {
-                    return it->second;
+                if (symIndex < Ctx.SymbolTable.size() &&
+                    Ctx.SymbolTable[symIndex].resolved) {
+                    return Ctx.SymbolTable[symIndex].value;
                 } else {
                     if (sym->st_shndx != SHN_UNDEF) {
                         auto labelSection = parser.getSectionHeader(sym->st_shndx);
@@ -1070,7 +1100,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                           << "), using PLT" << std::dec << std::endl;
 #endif
 
-                uint64_t pltAddr = getPLTEntryForSymbol(symName);
+                uint64_t pltAddr = getPLTEntryForSymbol(symIndex);
                 if (pltAddr == 0) {
                     fprintf(stderr, "ERROR: Failed to get PLT entry for symbol: %s\n", symName);
                     return false;
@@ -1148,7 +1178,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                 return false;
             }
 
-            gotAddr = getGOTEntryForSymbol(symName, targetAddr);
+            gotAddr = getGOTEntryForSymbol(symIndex, targetAddr);
             if (gotAddr == 0) {
                 fprintf(stderr, "ERROR: Failed to get GOT entry for symbol: %s\n", symName);
                 return false;
@@ -1281,7 +1311,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                           << std::hex << branch_offset << "), using PLT" << std::dec << std::endl;
 #endif
 
-                uint64_t pltAddr = getPLTEntryForSymbol(symName);
+                uint64_t pltAddr = getPLTEntryForSymbol(symIndex);
                 if (pltAddr == 0) {
                     fprintf(stderr, "ERROR: Failed to get PLT entry for symbol: %s\n", symName);
                     return false;
@@ -1308,7 +1338,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                 return false;
             }
 
-            gotAddr = getGOTEntryForSymbol(symName, targetAddr);
+            gotAddr = getGOTEntryForSymbol(symIndex, targetAddr);
             if (gotAddr == 0) {
                 fprintf(stderr, "ERROR: Failed to get GOT entry for symbol: %s\n", symName);
                 return false;
@@ -1335,7 +1365,7 @@ bool MinimalJITLinker::processRelocations(const MinimalELF64Parser& parser,
                 return false;
             }
 
-            gotAddr = getGOTEntryForSymbol(symName, targetAddr);
+            gotAddr = getGOTEntryForSymbol(symIndex, targetAddr);
             if (gotAddr == 0) {
                 fprintf(stderr, "ERROR: Failed to get GOT entry for symbol: %s\n", symName);
                 return false;
@@ -1396,7 +1426,10 @@ bool MinimalJITLinker::link(const char* objectData, size_t objectSize, uint64_t 
                             const char *AotFile,
                             void *(*g_malloc0)(uint64_t),
                             uint64_t *aot_code_base_ptr,
-                            uint64_t *funcmap_rbtree_root_ptr) {
+                            uint64_t *funcmap_rbtree_root_ptr,
+                            void *HelperFuncs,
+                            size_t HelperFuncsCnt
+                            ) {
     MinimalELF64Parser parser(objectData, objectSize);
     if (!parser.isValid()) {
         fprintf(stderr, "ERROR:Invalid ELF file\n");
@@ -1428,7 +1461,7 @@ bool MinimalJITLinker::link(const char* objectData, size_t objectSize, uint64_t 
         return false;
     }
 
-    buildSymbolTable(parser);
+    buildSymbolTable(parser, HelperFuncs, HelperFuncsCnt);
 
     if (!copySectionsAndRelocate(parser, startCode, register_mapping, log_message, AotFile, g_malloc0, aot_code_base_ptr, funcmap_rbtree_root_ptr)) {
         fprintf(stderr, "ERROR:Failed to copy sections and relocate\n");
