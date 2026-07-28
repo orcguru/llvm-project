@@ -8,7 +8,6 @@
 #include <vector>
 #include <cstdio>
 
-// 前向声明 ELF 结构
 typedef uint64_t Elf64_Addr;
 typedef uint64_t Elf64_Off;
 typedef uint16_t Elf64_Half;
@@ -62,90 +61,76 @@ struct Elf64_Rela {
     Elf64_Sxword r_addend;
 };
 
-// ELF 常量
 #define SHT_RELA 4
 #define SHT_SYMTAB 2
 #define SHT_STRTAB 3
 #define SHT_NOBITS 8
 #define SHN_UNDEF 0
 
-// 宏用于访问重定位信息
 #define ELF64_R_SYM(i) ((i) >> 32)
 #define ELF64_R_TYPE(i) ((i) & 0xffffffffL)
 
-// 在 light_jitlink.h 的 JITContext 结构中添加
 struct Hi20RelocationInfo {
-    uint64_t hi20TargetAddr;  // HI20 重定位的目标地址
-    uint64_t hi20RelocAddr;   // HI20 重定位的地址
-    int64_t hi20Addend;       // HI20 重定位的加数
+    uint64_t hi20TargetAddr;
+    uint64_t hi20RelocAddr;
+    int64_t hi20Addend;
 };
 
 struct GOTEntryInfo {
-    uint64_t gotAddr;      // GOT条目的地址
-    uint64_t slotIndex;    // 槽位索引
-    uint64_t targetAddr;   // 目标地址
+    uint64_t gotAddr;
+    uint64_t slotIndex;
+    uint64_t targetAddr;
 };
 
 struct PLTEntryInfo {
-    uint64_t pltAddr;      // PLT条目的地址
-    uint64_t slotIndex;    // 槽位索引
-    uint64_t gotEntryAddr; // 关联的GOT条目地址
+    uint64_t pltAddr;
+    uint64_t slotIndex;
+    uint64_t gotEntryAddr;
 };
 
-// 更新 PLT 条目结构为3条指令
 struct AArch64PLTEntry {
-    uint32_t instr0;  // adrp x16, [GOT entry page]
-    uint32_t instr1;  // ldr  x16, [x16, #offset in page]
-    uint32_t instr2;  // br   x16
-    uint32_t padding; // 填充，使结构为16字节对齐
+    uint32_t instr0;
+    uint32_t instr1;
+    uint32_t instr2;
+    uint32_t padding;
 };
 
-// 添加架构类型定义
 enum class ArchType {
     Unknown,
     AArch64,
     RISCV64
 };
 
-// 简化的链接上下文
 struct JITContext {
-    // 架构类型
     ArchType TargetArch = ArchType::Unknown;
 
-    // 符号表
     std::unordered_map<std::string, uint64_t> SymbolTable;
     
-    // PLT 和 GOT 相关
     std::vector<AArch64PLTEntry> PLTEntries;
-    std::unordered_map<std::string, uint64_t> PLTSymbolMap;  // symbol name -> PLT slot index
+    std::unordered_map<std::string, uint64_t> PLTSymbolMap;
     uint64_t PLTBaseAddr = 0;
     uint64_t GOTBaseAddr = 0;
     char* GOTPtr = nullptr;
     
-    // 当前分配的内存
     struct Allocation {
         char* Memory = nullptr;
         size_t Size = 0;
         uint64_t BaseAddress = 0;
     } CurrentAlloc;
     
-    // 加载的模块信息
     struct LoadedModule {
         uint64_t BaseAddress = 0;
         size_t CodeSize = 0;
     };
     std::vector<LoadedModule> Modules;
 
-    // GOT 相关
-    std::unordered_map<std::string, uint64_t> GotSymbolMap;  // 符号名 -> GOT 条目索引
+    std::unordered_map<std::string, uint64_t> GotSymbolMap;
     uint64_t NextGOTIndex = 0;
     uint64_t NextPLTIndex = 0;
 
-    // 在 JITContext 中添加
     std::unordered_map<uint64_t, Hi20RelocationInfo> Hi20RelocationMap;
 };
 
-// 自定义的极简 ELF 解析器
 class MinimalELF64Parser {
 private:
     const char* Data;
@@ -166,7 +151,6 @@ public:
     Elf64_Half getMachineType() const;
 };
 
-// 极简链接器
 class MinimalJITLinker {
 private:
     JITContext& Ctx;
@@ -175,7 +159,6 @@ public:
     MinimalJITLinker(JITContext& ctx);
     ~MinimalJITLinker();
     
-    // 主链接函数
     bool link(const char* objectData, size_t objectSize, uint64_t baseAddress,
               uint64_t startCode,
               void (*register_mapping)(uint64_t, uint64_t, uint64_t),
@@ -217,4 +200,4 @@ private:
     void printSectionsInfo(const MinimalELF64Parser& parser);
 };
 
-#endif // LIGHT_JITLINK_H
+#endif
