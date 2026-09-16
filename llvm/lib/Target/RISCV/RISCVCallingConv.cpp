@@ -841,6 +841,30 @@ bool llvm::CC_RISCV_QEMUAOT(unsigned ValNo, MVT ValVT, MVT LocVT,
     }
   }
 
+  if (LocVT == MVT::f32 && Subtarget.hasStdExtF()) {
+    static const MCPhysReg FPR32List[] = {
+        RISCV::F10_F, RISCV::F11_F, RISCV::F12_F, RISCV::F13_F, RISCV::F14_F,
+        RISCV::F15_F, RISCV::F16_F, RISCV::F17_F, RISCV::F0_F,  RISCV::F1_F,
+        RISCV::F2_F,  RISCV::F3_F,  RISCV::F4_F,  RISCV::F5_F,  RISCV::F6_F,
+        RISCV::F7_F,  RISCV::F28_F, RISCV::F29_F, RISCV::F30_F, RISCV::F31_F};
+    if (MCRegister Reg = State.AllocateReg(FPR32List)) {
+      State.addLoc(CCValAssign::getReg(ValNo, ValVT, Reg, LocVT, LocInfo));
+      return false;
+    }
+  }
+
+  if (LocVT == MVT::f64 && Subtarget.hasStdExtD()) {
+    static const MCPhysReg FPR64List[] = {
+        RISCV::F10_D, RISCV::F11_D, RISCV::F12_D, RISCV::F13_D, RISCV::F14_D,
+        RISCV::F15_D, RISCV::F16_D, RISCV::F17_D, RISCV::F0_D,  RISCV::F1_D,
+        RISCV::F2_D,  RISCV::F3_D,  RISCV::F4_D,  RISCV::F5_D,  RISCV::F6_D,
+        RISCV::F7_D,  RISCV::F28_D, RISCV::F29_D, RISCV::F30_D, RISCV::F31_D};
+    if (MCRegister Reg = State.AllocateReg(FPR64List)) {
+      State.addLoc(CCValAssign::getReg(ValNo, ValVT, Reg, LocVT, LocInfo));
+      return false;
+    }
+  }
+
   return true;
 }
 
@@ -851,6 +875,24 @@ bool llvm::RetCC_RISCV_QEMUAOT(unsigned ValNo, MVT ValVT, MVT LocVT,
 
   if (LocVT == MVT::i32 || LocVT == MVT::i64) {
     if (MCRegister Reg = State.AllocateReg(GPRList)) {
+      State.addLoc(CCValAssign::getReg(ValNo, ValVT, Reg, LocVT, LocInfo));
+      return false;
+    }
+  }
+
+  if (LocVT == MVT::f32 && Subtarget.hasStdExtF()) {
+    static const MCPhysReg FPR32List[] = {
+        RISCV::F10_F, RISCV::F11_F};
+    if (MCRegister Reg = State.AllocateReg(FPR32List)) {
+      State.addLoc(CCValAssign::getReg(ValNo, ValVT, Reg, LocVT, LocInfo));
+      return false;
+    }
+  }
+
+  if (LocVT == MVT::f64 && Subtarget.hasStdExtD()) {
+    static const MCPhysReg FPR64List[] = {
+        RISCV::F10_D, RISCV::F11_D};
+    if (MCRegister Reg = State.AllocateReg(FPR64List)) {
       State.addLoc(CCValAssign::getReg(ValNo, ValVT, Reg, LocVT, LocInfo));
       return false;
     }

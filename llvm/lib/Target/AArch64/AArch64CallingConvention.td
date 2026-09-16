@@ -151,6 +151,9 @@ def CC_AArch64_QEMUAOT : CallingConv<[
   CCIfType<[i1, i8, i16], CCPromoteToType<i32>>,
   CCIfType<[i32], CCAssignToReg<[W6, W7, W8, W9, W10, W11, W12, W13, W20, W21, W22, W23, W24, W26, W27, W28, W0, W1, W2, W3, W4, W5, W14, W15, W19, W18]>>,  // For arguments
   CCIfType<[i64], CCAssignToReg<[X6, X7, X8, X9, X10, X11, X12, X13, X20, X21, X22, X23, X24, X26, X27, X28, X0, X1, X2, X3, X4, X5, X14, X15, X19, X18]>>,
+  CCIfType<[f16], CCAssignToReg<[H0, H1, H2, H3, H4, H5, H6, H7]>>,
+  CCIfType<[f32], CCAssignToReg<[S0, S1, S2, S3, S4, S5, S6, S7]>>,
+  CCIfType<[f64], CCAssignToReg<[D0, D1, D2, D3, D4, D5, D6, D7]>>,
   CCIfType<[nxv16i8, nxv8i16, nxv4i32, nxv2i64, nxv2f16, nxv4f16, nxv8f16,
             nxv2bf16, nxv4bf16, nxv8bf16, nxv2f32, nxv4f32, nxv2f64],
            CCAssignToReg<[Z0, Z1, Z2, Z3, Z4, Z5, Z6, Z7, Z8, Z9, Z10, Z11, Z12, Z13, Z14, Z15, Z16, Z17, Z18, Z19, Z20, Z21, Z22, Z23, Z24, Z25, Z26, Z27, Z28, Z29, Z30, Z31]>>,
@@ -163,6 +166,9 @@ def RetCC_AArch64_QEMUAOT : CallingConv<[
   CCIfType<[i1, i8, i16], CCPromoteToType<i32>>,
   CCIfType<[i32], CCAssignToReg<[W19, W15]>>,
   CCIfType<[i64], CCAssignToReg<[X19, X15]>>,
+  CCIfType<[f16], CCAssignToReg<[H0, H1]>>,
+  CCIfType<[f32], CCAssignToReg<[S0, S1]>>,
+  CCIfType<[f64], CCAssignToReg<[D0, D1]>>,
   CCIfType<[v2i64, v4i32, v8i16, v16i8], CCAssignToReg<[Q30, Q31]>>,
   CCIfType<[nxv16i8, nxv8i16, nxv4i32, nxv2i64, nxv2f16, nxv4f16, nxv8f16,
             nxv2bf16, nxv4bf16, nxv8bf16, nxv2f32, nxv4f32, nxv2f64], CCAssignToReg<[Z30, Z31]>>
