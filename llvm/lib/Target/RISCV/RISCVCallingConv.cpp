@@ -841,6 +841,9 @@ bool llvm::CC_RISCV_QEMUAOT(unsigned ValNo, MVT ValVT, MVT LocVT,
     }
   }
 
+  const RISCVSubtarget &Subtarget =
+      State.getMachineFunction().getSubtarget<RISCVSubtarget>();
+
   if (LocVT == MVT::f32 && Subtarget.hasStdExtF()) {
     static const MCPhysReg FPR32List[] = {
         RISCV::F10_F, RISCV::F11_F, RISCV::F12_F, RISCV::F13_F, RISCV::F14_F,
@@ -879,6 +882,9 @@ bool llvm::RetCC_RISCV_QEMUAOT(unsigned ValNo, MVT ValVT, MVT LocVT,
       return false;
     }
   }
+
+  const RISCVSubtarget &Subtarget =
+      State.getMachineFunction().getSubtarget<RISCVSubtarget>();
 
   if (LocVT == MVT::f32 && Subtarget.hasStdExtF()) {
     static const MCPhysReg FPR32List[] = {
