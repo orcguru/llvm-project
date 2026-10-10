@@ -500,13 +500,8 @@ AArch64RegisterInfo::getStrictlyReservedRegs(const MachineFunction &MF) const {
     markSuperRegs(Reserved, AArch64::W28);
   }
 
-  if (MF.getFunction().getCallingConv() == CallingConv::QEMUAOT) {
-    Reserved.set(AArch64::W25);
-    Reserved.set(AArch64::X25);
-  } else {
-    //FIXME
+  if (MF.getFunction().getCallingConv() != CallingConv::QEMUAOT)
     assert(checkAllSuperRegsMarked(Reserved));
-  }
 
   // Add _HI registers after checkAllSuperRegsMarked as this check otherwise
   // becomes considerably more expensive.
@@ -564,13 +559,8 @@ AArch64RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
       markSuperRegs(Reserved, AArch64::LR);
   }
 
-  if (MF.getFunction().getCallingConv() == CallingConv::QEMUAOT) {
-    Reserved.set(AArch64::W25);
-    Reserved.set(AArch64::X25);
-  } else {
-    //FIXME
+  if (MF.getFunction().getCallingConv() != CallingConv::QEMUAOT)
     assert(checkAllSuperRegsMarked(Reserved));
-  }
 
   // Handle strictlyReservedRegs separately to avoid re-evaluating the assert,
   // which becomes considerably expensive when considering the _HI registers.
@@ -618,10 +608,6 @@ bool AArch64RegisterInfo::isAsmClobberable(const MachineFunction &MF,
 
   // ZA/ZT0 registers are reserved but may be permitted in the clobber list.
   if (PhysReg == AArch64::ZA || PhysReg == AArch64::ZT0)
-    return true;
-
-  if (MF.getFunction().getCallingConv() == CallingConv::QEMUAOT &&
-        MCRegisterInfo::regsOverlap(PhysReg, AArch64::X25))
     return true;
 
   return !isReservedReg(MF, PhysReg);

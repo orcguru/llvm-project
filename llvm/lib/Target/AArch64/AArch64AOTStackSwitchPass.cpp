@@ -114,6 +114,10 @@ bool AArch64AOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
             if (MO.isGlobal()) {
               const Function *Callee = dyn_cast<Function>(MO.getGlobal());
               if (Callee && Callee->getCallingConv() != CallingConv::QEMUAOT) {
+                // Position cpu to env
+                // FIXME: sync with QEMU_CPUARCHSTATE_OFFSET from tcg_mapper
+                BuildMI(MBB, InsertPos, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::X25).addReg(AArch64::X25).addImm(0x2).addImm(1);
+                BuildMI(MBB, InsertPos, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::X25).addReg(AArch64::X25).addImm(0xcd0).addImm(0);
                 // Switch stack
                 BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(AArch64::SP).addReg(AArch64::X25).addImm(-64);
                 BuildMI(MBB, InsertPos, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::SP).addReg(AArch64::X25).addImm(-56);
@@ -128,6 +132,10 @@ bool AArch64AOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
           }
           // This is likely call via argument to runtime helper, need do switch
           if (ForceAOTStackSwitch() && found_global == 0 && did_switch == 0) {
+              // Position cpu to env
+              // FIXME: sync with QEMU_CPUARCHSTATE_OFFSET from tcg_mapper
+              BuildMI(MBB, InsertPos, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::X25).addReg(AArch64::X25).addImm(0x2).addImm(1);
+              BuildMI(MBB, InsertPos, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::X25).addReg(AArch64::X25).addImm(0xcd0).addImm(0);
               // Switch stack
               BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(AArch64::SP).addReg(AArch64::X25).addImm(-64);
               BuildMI(MBB, InsertPos, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::SP).addReg(AArch64::X25).addImm(-56);
@@ -142,6 +150,11 @@ bool AArch64AOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
             if (MO.isGlobal()) {
               const Function *Callee = dyn_cast<Function>(MO.getGlobal());
               if (Callee && Callee->getCallingConv() != CallingConv::QEMUAOT) {
+                // Position cpu to env
+                // FIXME: sync with QEMU_CPUARCHSTATE_OFFSET from tcg_mapper
+                BuildMI(MBB, InsertPos, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::X25).addReg(AArch64::X25).addImm(0x2).addImm(1);
+                BuildMI(MBB, InsertPos, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::X25).addReg(AArch64::X25).addImm(0xcd0).addImm(0);
+                // Switch stack
                 BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(AArch64::SP).addReg(AArch64::X25).addImm(-64);
                 BuildMI(MBB, InsertPos, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::SP).addReg(AArch64::X25).addImm(-56);
                 Changed = true;
@@ -159,6 +172,10 @@ bool AArch64AOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
           // Switch stack
           BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(AArch64::SP).addReg(AArch64::X25).addImm(-56);
           BuildMI(MBB, InsertPos, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::SP).addReg(AArch64::X25).addImm(-64);
+          // Position env to cpu
+          // FIXME: sync with QEMU_CPUARCHSTATE_OFFSET from tcg_mapper
+          BuildMI(MBB, InsertPos, DL, TII.get(AArch64::SUBXri)).addReg(AArch64::X25).addReg(AArch64::X25).addImm(0x2).addImm(1);
+          BuildMI(MBB, InsertPos, DL, TII.get(AArch64::SUBXri)).addReg(AArch64::X25).addReg(AArch64::X25).addImm(0xcd0).addImm(0);
           Changed = true;
         }
       }
