@@ -105,53 +105,39 @@ bool AArch64AOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
       DebugLoc DL = MI->getDebugLoc();
       ++MI; // Advance iterator before we potentially modify the instruction
       
-      if (Instr.isCall()) {
-        if (!TII.isTailCall(Instr)) {
-          // Handle switch from AOT to runtime and return back (need to backup ENV)
-          int found_global = 0;
-          int did_switch = 0;
-          for (const MachineOperand &MO : Instr.operands()) {
-            if (MO.isGlobal()) {
-              const Function *Callee = dyn_cast<Function>(MO.getGlobal());
-              if (Callee && Callee->getCallingConv() != CallingConv::QEMUAOT) {
-                // Switch stack
-                BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(AArch64::SP).addReg(AArch64::X25).addImm(-64);
-                BuildMI(MBB, InsertPos, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::SP).addReg(AArch64::X25).addImm(-56);
-                // Backup ENV
-                BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(AArch64::X25).addReg(AArch64::SP).addImm(-8);
-                BuildMI(MBB, InsertPos, DL, TII.get(AArch64::SUBXri)).addReg(AArch64::SP).addReg(AArch64::SP).addImm(16).addImm(0);
-                Changed = true;
-                did_switch = 1;
-              }
-              found_global = 1;
+      if (Instr.isInlineAsm()) {
+        const char *AsmStr = Instr.getOperand(InlineAsm::MIOp_AsmString).getSymbolName();
+        if (strncmp(AsmStr, "mov x25,", 8) == 0) {
+          unsigned DidSwitch = 0;
+          unsigned RegIdx = 0;
+          if (strstr(AsmStr, "mov $0, x0") != NULL) {
+            RegIdx = 1;
+          }
+          for (unsigned i = InlineAsm::MIOp_FirstOperand, ridx = 0, e = Instr.getNumOperands();
+               i != e; ++i) {
+            const MachineOperand &Op = Instr.getOperand(i);
+            if (!Op.isReg())
+              continue;
+            if (ridx != RegIdx) {
+              ridx += 1;
+              continue;
             }
+
+            Register Reg = Op.getReg();
+            // Switch stack
+            BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(AArch64::SP).addReg(Reg).addImm(-64);
+            BuildMI(MBB, InsertPos, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::SP).addReg(Reg).addImm(-56);
+            // Backup ENV
+            BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(Reg).addReg(AArch64::SP).addImm(-8);
+            BuildMI(MBB, InsertPos, DL, TII.get(AArch64::SUBXri)).addReg(AArch64::SP).addReg(AArch64::SP).addImm(16).addImm(0);
+            Changed = true;
+            DidSwitch = 1;
+            break;
           }
-          // This is likely call via argument to runtime helper, need do switch
-          if (ForceAOTStackSwitch() && found_global == 0 && did_switch == 0) {
-              // Switch stack
-              BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(AArch64::SP).addReg(AArch64::X25).addImm(-64);
-              BuildMI(MBB, InsertPos, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::SP).addReg(AArch64::X25).addImm(-56);
-              // Backup ENV
-              BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(AArch64::X25).addReg(AArch64::SP).addImm(-8);
-              BuildMI(MBB, InsertPos, DL, TII.get(AArch64::SUBXri)).addReg(AArch64::SP).addReg(AArch64::SP).addImm(16).addImm(0);
-              Changed = true;
-          }
-        } else {
-          // Handle switch from AOT to runtime and without return back (do not backup ENV)
-          for (const MachineOperand &MO : Instr.operands()) {
-            if (MO.isGlobal()) {
-              const Function *Callee = dyn_cast<Function>(MO.getGlobal());
-              if (Callee && Callee->getCallingConv() != CallingConv::QEMUAOT) {
-                // Switch stack
-                BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(AArch64::SP).addReg(AArch64::X25).addImm(-64);
-                BuildMI(MBB, InsertPos, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::SP).addReg(AArch64::X25).addImm(-56);
-                Changed = true;
-              }
-            }
-          }
-        }
-        if (!TII.isTailCall(Instr) && MI != ME) {
-          // Handle switch from runtime to AOT
+          if (!DidSwitch)
+            continue;
+
+          assert(MI != ME);
           InsertPos = MI;
           DL = MI->getDebugLoc();
           // Restore ENV
