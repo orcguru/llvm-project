@@ -27,23 +27,6 @@ using namespace llvm;
 
 #define DEBUG_TYPE "aarch64-aot-stack-switch"
 
-static bool EnableAOTStackSwitch() {
-  static bool Enabled = []() {
-    const char *Env = std::getenv("LLVM_ENABLE_AOT_STACK_SWITCH");
-    return Env != nullptr && std::strcmp(Env, "1") == 0;
-  }();
-  return Enabled;
-}
-
-// For rampoline_do_not_sync_vector
-static bool ForceAOTStackSwitch() {
-  static bool Enabled = []() {
-    const char *Env = std::getenv("LLVM_FORCE_AOT_STACK_SWITCH");
-    return Env != nullptr && std::strcmp(Env, "1") == 0;
-  }();
-  return Enabled;
-}
-
 //===----------------------------------------------------------------------===//
 // AArch64AOTStackSwitchPass class
 //===----------------------------------------------------------------------===//
@@ -77,9 +60,6 @@ INITIALIZE_PASS(AArch64AOTStackSwitch, DEBUG_TYPE,
 //===----------------------------------------------------------------------===//
 
 bool AArch64AOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
-  if (!(EnableAOTStackSwitch() || ForceAOTStackSwitch())) {
-    return false;
-  }
   // Get the LLVM function
   const Function &F = MF.getFunction();
   
@@ -125,11 +105,13 @@ bool AArch64AOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
 
             Register Reg = Op.getReg();
             // Switch stack
-            BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(AArch64::SP).addReg(Reg).addImm(-64);
-            BuildMI(MBB, InsertPos, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::SP).addReg(Reg).addImm(-56);
+            BuildMI(MBB, InsertPos, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::X26, RegState::Define).addReg(AArch64::SP).addImm(0).addImm(0);
+            BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(AArch64::X26).addReg(Reg).addImm(-64);
+            BuildMI(MBB, InsertPos, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::X26, RegState::Define).addReg(Reg).addImm(-56);
             // Backup ENV
-            BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(Reg).addReg(AArch64::SP).addImm(-8);
-            BuildMI(MBB, InsertPos, DL, TII.get(AArch64::SUBXri)).addReg(AArch64::SP).addReg(AArch64::SP).addImm(16).addImm(0);
+            BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(Reg).addReg(AArch64::X26).addImm(-8);
+            BuildMI(MBB, InsertPos, DL, TII.get(AArch64::SUBXri)).addReg(AArch64::X26, RegState::Define).addReg(AArch64::X26).addImm(16).addImm(0);
+            BuildMI(MBB, InsertPos, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::SP, RegState::Define).addReg(AArch64::X26).addImm(0).addImm(0);
             Changed = true;
             DidSwitch = 1;
             break;
@@ -141,11 +123,13 @@ bool AArch64AOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
           InsertPos = MI;
           DL = MI->getDebugLoc();
           // Restore ENV
-          BuildMI(MBB, InsertPos, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::SP).addReg(AArch64::SP).addImm(16).addImm(0);
-          BuildMI(MBB, InsertPos, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::X25).addReg(AArch64::SP).addImm(-8);
+          BuildMI(MBB, InsertPos, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::SP, RegState::Define).addReg(AArch64::SP).addImm(16).addImm(0);
+          BuildMI(MBB, InsertPos, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::X25, RegState::Define).addReg(AArch64::SP).addImm(-8);
           // Switch stack
-          BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(AArch64::SP).addReg(AArch64::X25).addImm(-56);
-          BuildMI(MBB, InsertPos, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::SP).addReg(AArch64::X25).addImm(-64);
+          BuildMI(MBB, InsertPos, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::X26, RegState::Define).addReg(AArch64::SP).addImm(0).addImm(0);
+          BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(AArch64::X26).addReg(AArch64::X25).addImm(-56);
+          BuildMI(MBB, InsertPos, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::X26, RegState::Define).addReg(AArch64::X25).addImm(-64);
+          BuildMI(MBB, InsertPos, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::SP, RegState::Define).addReg(AArch64::X26).addImm(0).addImm(0);
           Changed = true;
         }
       }
