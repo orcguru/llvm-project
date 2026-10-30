@@ -507,6 +507,8 @@ AArch64RegisterInfo::getStrictlyReservedRegs(const MachineFunction &MF) const {
     if (shouldReserveAOTEnvRegs(MF)) {
       Reserved.set(AArch64::W25);
       Reserved.set(AArch64::X25);
+      Reserved.set(AArch64::W26);
+      Reserved.set(AArch64::X26);
     }
   }
 
@@ -572,6 +574,8 @@ AArch64RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
     if (shouldReserveAOTEnvRegs(MF)) {
       Reserved.set(AArch64::W25);
       Reserved.set(AArch64::X25);
+      Reserved.set(AArch64::W26);
+      Reserved.set(AArch64::X26);
     }
   }
 
@@ -625,7 +629,8 @@ bool AArch64RegisterInfo::isAsmClobberable(const MachineFunction &MF,
 
   if (MF.getFunction().getCallingConv() == CallingConv::QEMUAOT &&
         shouldReserveAOTEnvRegs(MF) &&
-        MCRegisterInfo::regsOverlap(PhysReg, AArch64::X25))
+        (MCRegisterInfo::regsOverlap(PhysReg, AArch64::X25) ||
+         MCRegisterInfo::regsOverlap(PhysReg, AArch64::X26)))
     return true;
 
   return !isReservedReg(MF, PhysReg);
