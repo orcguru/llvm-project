@@ -505,10 +505,10 @@ AArch64RegisterInfo::getStrictlyReservedRegs(const MachineFunction &MF) const {
     assert(checkAllSuperRegsMarked(Reserved));
   else {
     if (shouldReserveAOTEnvRegs(MF)) {
-      Reserved.set(AArch64::W25);
-      Reserved.set(AArch64::X25);
-      Reserved.set(AArch64::W26);
-      Reserved.set(AArch64::X26);
+      Reserved.set(AArch64::W16);
+      Reserved.set(AArch64::X16);
+      Reserved.set(AArch64::W17);
+      Reserved.set(AArch64::X17);
     }
   }
 
@@ -572,10 +572,10 @@ AArch64RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
     assert(checkAllSuperRegsMarked(Reserved));
   else {
     if (shouldReserveAOTEnvRegs(MF)) {
-      Reserved.set(AArch64::W25);
-      Reserved.set(AArch64::X25);
-      Reserved.set(AArch64::W26);
-      Reserved.set(AArch64::X26);
+      Reserved.set(AArch64::W16);
+      Reserved.set(AArch64::X16);
+      Reserved.set(AArch64::W17);
+      Reserved.set(AArch64::X17);
     }
   }
 
@@ -629,8 +629,8 @@ bool AArch64RegisterInfo::isAsmClobberable(const MachineFunction &MF,
 
   if (MF.getFunction().getCallingConv() == CallingConv::QEMUAOT &&
         shouldReserveAOTEnvRegs(MF) &&
-        (MCRegisterInfo::regsOverlap(PhysReg, AArch64::X25) ||
-         MCRegisterInfo::regsOverlap(PhysReg, AArch64::X26)))
+        (MCRegisterInfo::regsOverlap(PhysReg, AArch64::X16) ||
+         MCRegisterInfo::regsOverlap(PhysReg, AArch64::X17)))
     return true;
 
   return !isReservedReg(MF, PhysReg);

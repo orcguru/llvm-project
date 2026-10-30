@@ -61,59 +61,34 @@ char AArch64AOTStackSwitch::ID = 0;
 INITIALIZE_PASS(AArch64AOTStackSwitch, DEBUG_TYPE,
                       "AArch64 AOT Stack Switch Pass", false, false)
 
-static void emitLoadEnvOffset(const MachineFunction &MF,
-                              MachineBasicBlock &MBB,
-                              MachineBasicBlock::iterator I,
-                              const DebugLoc &DL,
-                              const TargetInstrInfo &TII) {
-  const Module *M = MF.getFunction().getParent();
-  assert(M);
-  const GlobalVariable *GV = M->getNamedGlobal("env_offset");
-  assert(GV && GV->hasInitializer());
-  auto *CI = dyn_cast<ConstantInt>(GV->getInitializer());
-  assert(CI);
-  int64_t Off = CI->getSExtValue();      // env_offset fits MOVZ imm16
-  BuildMI(MBB, I, DL, TII.get(AArch64::MOVZXi)).addReg(AArch64::X26, RegState::Define)
-      .addImm(Off).addImm(0);
-}
-
 static void emitStackSwitch(const MachineFunction &MF,
                             MachineBasicBlock &MBB, MachineInstr &CallMI,
                             const TargetInstrInfo &TII) {
   MachineBasicBlock::iterator I(CallMI);
   MachineBasicBlock::iterator After = std::next(I);
   DebugLoc DL = CallMI.getDebugLoc();
-  const unsigned ENV = AArch64::X25;
-
-  // ---- before: x25 = cpu + off  (env) ----
-  emitLoadEnvOffset(MF, MBB, I, DL, TII);
-  BuildMI(MBB, I, DL, TII.get(AArch64::ADDXrx)).addReg(ENV, RegState::Define)
-      .addReg(ENV).addReg(AArch64::X26).addImm(AArch64_AM::getArithExtendImm(AArch64_AM::UXTX, 0));
+  const unsigned ENV = AArch64::X16;
 
   // Switch stack
-  BuildMI(MBB, I, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::X26, RegState::Define).addReg(AArch64::SP).addImm(0).addImm(0);
-  BuildMI(MBB, I, DL, TII.get(AArch64::STURXi)).addReg(AArch64::X26).addReg(ENV).addImm(-64);
-  BuildMI(MBB, I, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::X26, RegState::Define).addReg(ENV).addImm(-56);
+  BuildMI(MBB, I, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::X17, RegState::Define).addReg(AArch64::SP).addImm(0).addImm(0);
+  BuildMI(MBB, I, DL, TII.get(AArch64::STURXi)).addReg(AArch64::X17).addReg(ENV).addImm(-64);
+  BuildMI(MBB, I, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::X17, RegState::Define).addReg(ENV).addImm(-56);
   // Backup ENV
-  BuildMI(MBB, I, DL, TII.get(AArch64::STURXi)).addReg(ENV).addReg(AArch64::X26).addImm(-8);
-  BuildMI(MBB, I, DL, TII.get(AArch64::SUBXri)).addReg(AArch64::X26, RegState::Define).addReg(AArch64::X26).addImm(16).addImm(0);
-  BuildMI(MBB, I, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::SP, RegState::Define).addReg(AArch64::X26).addImm(0).addImm(0);
+  BuildMI(MBB, I, DL, TII.get(AArch64::STURXi)).addReg(ENV).addReg(AArch64::X17).addImm(-8);
+  BuildMI(MBB, I, DL, TII.get(AArch64::SUBXri)).addReg(AArch64::X17, RegState::Define).addReg(AArch64::X17).addImm(16).addImm(0);
+  BuildMI(MBB, I, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::SP, RegState::Define).addReg(AArch64::X17).addImm(0).addImm(0);
 
   // ---- the call sits here ----
-
-  // Restore ENV
-  BuildMI(MBB, After, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::SP, RegState::Define).addReg(AArch64::SP).addImm(16).addImm(0);
-  BuildMI(MBB, After, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::X25, RegState::Define).addReg(AArch64::SP).addImm(-8);
-  // Switch stack
-  BuildMI(MBB, After, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::X26, RegState::Define).addReg(AArch64::SP).addImm(0).addImm(0);
-  BuildMI(MBB, After, DL, TII.get(AArch64::STURXi)).addReg(AArch64::X26).addReg(AArch64::X25).addImm(-56);
-  BuildMI(MBB, After, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::X26, RegState::Define).addReg(AArch64::X25).addImm(-64);
-  BuildMI(MBB, After, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::SP, RegState::Define).addReg(AArch64::X26).addImm(0).addImm(0);
-
-  // ---- after: restore x25 ----
-  emitLoadEnvOffset(MF, MBB, After, DL, TII);
-  BuildMI(MBB, After, DL, TII.get(AArch64::SUBXrx)).addReg(ENV, RegState::Define)
-      .addReg(ENV).addReg(AArch64::X26).addImm(AArch64_AM::getArithExtendImm(AArch64_AM::UXTX, 0));
+  if (!TII.isTailCall(CallMI)) {
+    // Restore ENV
+    BuildMI(MBB, After, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::SP, RegState::Define).addReg(AArch64::SP).addImm(16).addImm(0);
+    BuildMI(MBB, After, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::X16, RegState::Define).addReg(AArch64::SP).addImm(-8);
+    // Switch stack
+    BuildMI(MBB, After, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::X17, RegState::Define).addReg(AArch64::SP).addImm(0).addImm(0);
+    BuildMI(MBB, After, DL, TII.get(AArch64::STURXi)).addReg(AArch64::X17).addReg(AArch64::X16).addImm(-56);
+    BuildMI(MBB, After, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::X17, RegState::Define).addReg(AArch64::X16).addImm(-64);
+    BuildMI(MBB, After, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::SP, RegState::Define).addReg(AArch64::X17).addImm(0).addImm(0);
+  }
 }
 
 static bool needsSwitch(const MachineInstr &MI) {
@@ -154,58 +129,10 @@ bool AArch64AOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
     
     while (MI != ME) {
       MachineInstr &Instr = *MI;
-      MachineBasicBlock::iterator InsertPos = MI;
       DebugLoc DL = MI->getDebugLoc();
       ++MI; // Advance iterator before we potentially modify the instruction
       
-      if (Instr.isInlineAsm()) {
-        const char *AsmStr = Instr.getOperand(InlineAsm::MIOp_AsmString).getSymbolName();
-        if (strncmp(AsmStr, "mov x25,", 8) == 0) {
-          unsigned DidSwitch = 0;
-          unsigned RegIdx = 0;
-          if (strstr(AsmStr, "mov $0, x0") != NULL) {
-            RegIdx = 1;
-          }
-          for (unsigned i = InlineAsm::MIOp_FirstOperand, ridx = 0, e = Instr.getNumOperands();
-               i != e; ++i) {
-            const MachineOperand &Op = Instr.getOperand(i);
-            if (!Op.isReg())
-              continue;
-            if (ridx != RegIdx) {
-              ridx += 1;
-              continue;
-            }
-
-            Register Reg = Op.getReg();
-            // Switch stack
-            BuildMI(MBB, InsertPos, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::X26, RegState::Define).addReg(AArch64::SP).addImm(0).addImm(0);
-            BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(AArch64::X26).addReg(Reg).addImm(-64);
-            BuildMI(MBB, InsertPos, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::X26, RegState::Define).addReg(Reg).addImm(-56);
-            // Backup ENV
-            BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(Reg).addReg(AArch64::X26).addImm(-8);
-            BuildMI(MBB, InsertPos, DL, TII.get(AArch64::SUBXri)).addReg(AArch64::X26, RegState::Define).addReg(AArch64::X26).addImm(16).addImm(0);
-            BuildMI(MBB, InsertPos, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::SP, RegState::Define).addReg(AArch64::X26).addImm(0).addImm(0);
-            Changed = true;
-            DidSwitch = 1;
-            break;
-          }
-          if (!DidSwitch)
-            continue;
-
-          assert(MI != ME);
-          InsertPos = MI;
-          DL = MI->getDebugLoc();
-          // Restore ENV
-          BuildMI(MBB, InsertPos, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::SP, RegState::Define).addReg(AArch64::SP).addImm(16).addImm(0);
-          BuildMI(MBB, InsertPos, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::X25, RegState::Define).addReg(AArch64::SP).addImm(-8);
-          // Switch stack
-          BuildMI(MBB, InsertPos, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::X26, RegState::Define).addReg(AArch64::SP).addImm(0).addImm(0);
-          BuildMI(MBB, InsertPos, DL, TII.get(AArch64::STURXi)).addReg(AArch64::X26).addReg(AArch64::X25).addImm(-56);
-          BuildMI(MBB, InsertPos, DL, TII.get(AArch64::LDURXi)).addReg(AArch64::X26, RegState::Define).addReg(AArch64::X25).addImm(-64);
-          BuildMI(MBB, InsertPos, DL, TII.get(AArch64::ADDXri)).addReg(AArch64::SP, RegState::Define).addReg(AArch64::X26).addImm(0).addImm(0);
-          Changed = true;
-        }
-      } else if (needsSwitch(Instr)) {
+      if (needsSwitch(Instr)) {
         if (!shouldReserveAOTEnvRegs(MF))
           report_fatal_error("Please set flag --qemu-aot-env-reg=aot");
         emitStackSwitch(MF, MBB, Instr, TII);
