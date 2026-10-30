@@ -21,6 +21,7 @@
 #include "Utils/AArch64SMEAttributes.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/BinaryFormat/Dwarf.h"
+#include "llvm/CodeGen/AOTEnvFlags.h"
 #include "llvm/CodeGen/LiveRegMatrix.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
@@ -502,6 +503,12 @@ AArch64RegisterInfo::getStrictlyReservedRegs(const MachineFunction &MF) const {
 
   if (MF.getFunction().getCallingConv() != CallingConv::QEMUAOT)
     assert(checkAllSuperRegsMarked(Reserved));
+  else {
+    if (shouldReserveAOTEnvRegs(MF)) {
+      Reserved.set(AArch64::W25);
+      Reserved.set(AArch64::X25);
+    }
+  }
 
   // Add _HI registers after checkAllSuperRegsMarked as this check otherwise
   // becomes considerably more expensive.
@@ -561,6 +568,12 @@ AArch64RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
 
   if (MF.getFunction().getCallingConv() != CallingConv::QEMUAOT)
     assert(checkAllSuperRegsMarked(Reserved));
+  else {
+    if (shouldReserveAOTEnvRegs(MF)) {
+      Reserved.set(AArch64::W25);
+      Reserved.set(AArch64::X25);
+    }
+  }
 
   // Handle strictlyReservedRegs separately to avoid re-evaluating the assert,
   // which becomes considerably expensive when considering the _HI registers.
@@ -608,6 +621,11 @@ bool AArch64RegisterInfo::isAsmClobberable(const MachineFunction &MF,
 
   // ZA/ZT0 registers are reserved but may be permitted in the clobber list.
   if (PhysReg == AArch64::ZA || PhysReg == AArch64::ZT0)
+    return true;
+
+  if (MF.getFunction().getCallingConv() == CallingConv::QEMUAOT &&
+        shouldReserveAOTEnvRegs(MF) &&
+        MCRegisterInfo::regsOverlap(PhysReg, AArch64::X25))
     return true;
 
   return !isReservedReg(MF, PhysReg);
