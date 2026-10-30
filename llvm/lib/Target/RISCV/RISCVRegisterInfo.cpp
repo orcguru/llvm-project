@@ -15,6 +15,7 @@
 #include "RISCVSubtarget.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/BinaryFormat/Dwarf.h"
+#include "llvm/CodeGen/AOTEnvFlags.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
@@ -178,7 +179,10 @@ BitVector RISCVRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   markSuperRegs(Reserved, RISCV::SSP);
 
   if (MF.getFunction().getCallingConv() == CallingConv::QEMUAOT) {
-    Reserved.set(RISCV::X25);
+    if (shouldReserveAOTEnvRegs(MF)) {
+      Reserved.set(RISCV::X7);
+      Reserved.set(RISCV::X8);
+    }
   } else {
     assert(checkAllSuperRegsMarked(Reserved));
   }

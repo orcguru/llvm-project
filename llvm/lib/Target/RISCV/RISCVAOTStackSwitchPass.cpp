@@ -14,6 +14,7 @@
 
 #include "RISCV.h"
 #include "RISCVSubtarget.h"
+#include "llvm/CodeGen/AOTEnvFlags.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
@@ -25,22 +26,6 @@
 using namespace llvm;
 
 #define DEBUG_TYPE "riscv-aot-stack-switch"
-
-static bool EnableAOTStackSwitch() {
-  static bool Enabled = []() {
-    const char *Env = std::getenv("LLVM_ENABLE_AOT_STACK_SWITCH");
-    return Env != nullptr && std::strcmp(Env, "1") == 0;
-  }();
-  return Enabled;
-}
-
-static bool ForceAOTStackSwitch() {
-  static bool Enabled = []() {
-    const char *Env = std::getenv("LLVM_FORCE_AOT_STACK_SWITCH");
-    return Env != nullptr && std::strcmp(Env, "1") == 0;
-  }();
-  return Enabled;
-}
 
 //===----------------------------------------------------------------------===//
 // RISCVAOTStackSwitchPass class
@@ -70,14 +55,51 @@ char RISCVAOTStackSwitch::ID = 0;
 INITIALIZE_PASS(RISCVAOTStackSwitch, DEBUG_TYPE,
                       "RISCV AOT Stack Switch Pass", false, false)
 
+static void emitStackSwitch(const MachineFunction &MF,
+                            MachineBasicBlock &MBB, MachineInstr &CallMI,
+                            const TargetInstrInfo &TII) {
+  MachineBasicBlock::iterator I(CallMI);
+  MachineBasicBlock::iterator After = std::next(I);
+  DebugLoc DL = CallMI.getDebugLoc();
+  const unsigned ENV = RISCV::X7;
+
+  // Switch stack
+  BuildMI(MBB, I, DL, TII.get(RISCV::SD)).addReg(RISCV::X2).addReg(ENV).addImm(-64);
+  BuildMI(MBB, I, DL, TII.get(RISCV::LD)).addReg(RISCV::X2, RegState::Define).addReg(ENV).addImm(-56);
+  // Reload thread-pointer
+  BuildMI(MBB, I, DL, TII.get(RISCV::LD)).addReg(RISCV::X4).addReg(ENV).addImm(-80);
+  // Backup ENV
+  BuildMI(MBB, I, DL, TII.get(RISCV::SD)).addReg(ENV).addReg(RISCV::X2).addImm(-8);
+  BuildMI(MBB, I, DL, TII.get(RISCV::ADDI)).addReg(RISCV::X2).addReg(RISCV::X2).addImm(-16);
+
+  // ---- the call sits here ----
+  if (!TII.isTailCall(CallMI)) {
+    // Restore ENV
+    BuildMI(MBB, After, DL, TII.get(RISCV::ADDI)).addReg(RISCV::X2).addReg(RISCV::X2).addImm(16);
+    BuildMI(MBB, After, DL, TII.get(RISCV::LD)).addReg(ENV).addReg(RISCV::X2).addImm(-8);
+    // Switch stack
+    BuildMI(MBB, After, DL, TII.get(RISCV::SD)).addReg(RISCV::X2).addReg(ENV).addImm(-56);
+    BuildMI(MBB, After, DL, TII.get(RISCV::LD)).addReg(RISCV::X2).addReg(ENV).addImm(-64);
+  }
+}
+
+static bool needsSwitch(const MachineInstr &MI) {
+  if (!MI.isCall()) return false;
+  for (const MachineOperand &MO : MI.operands()) {
+    if (MO.isSymbol()) return true;                 // __divti3, memcpy, ... : always C ABI
+    if (MO.isGlobal()) {
+      const Function *F = dyn_cast<Function>(MO.getGlobal());
+      return !F || F->getCallingConv() != CallingConv::QEMUAOT;
+    }
+  }
+  return false;                                     // BLR: unknown callee
+}
+
 //===----------------------------------------------------------------------===//
 // Pass implementation
 //===----------------------------------------------------------------------===//
 
 bool RISCVAOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
-  if (!(EnableAOTStackSwitch() || ForceAOTStackSwitch())) {
-    return false;
-  }
   // Get the LLVM function
   const Function &F = MF.getFunction();
   
@@ -99,69 +121,14 @@ bool RISCVAOTStackSwitch::runOnMachineFunction(MachineFunction &MF) {
     
     while (MI != ME) {
       MachineInstr &Instr = *MI;
-      MachineBasicBlock::iterator InsertPos = MI;
       DebugLoc DL = MI->getDebugLoc();
       ++MI; // Advance iterator before we potentially modify the instruction
       
-      if (Instr.isCall()) {
-        if (!TII.isTailCall(Instr)) {
-          // Handle switch from AOT to runtime and return back (need to backup ENV)
-          int found_global = 0;
-          int did_switch = 0;
-          for (const MachineOperand &MO : Instr.operands()) {
-            if (MO.isGlobal()) {
-              const Function *Callee = dyn_cast<Function>(MO.getGlobal());
-              if (Callee && Callee->getCallingConv() != CallingConv::QEMUAOT) {
-                // Switch stack
-                BuildMI(MBB, InsertPos, DL, TII.get(RISCV::SD)).addReg(RISCV::X2).addReg(RISCV::X25).addImm(-64);
-                BuildMI(MBB, InsertPos, DL, TII.get(RISCV::LD)).addReg(RISCV::X2).addReg(RISCV::X25).addImm(-56);
-                BuildMI(MBB, InsertPos, DL, TII.get(RISCV::LD)).addReg(RISCV::X4).addReg(RISCV::X25).addImm(-80);
-                // Backup ENV
-                BuildMI(MBB, InsertPos, DL, TII.get(RISCV::SD)).addReg(RISCV::X25).addReg(RISCV::X2).addImm(-8);
-                BuildMI(MBB, InsertPos, DL, TII.get(RISCV::ADDI)).addReg(RISCV::X2).addReg(RISCV::X2).addImm(-16);
-                Changed = true;
-                did_switch = 1;
-              }
-              found_global = 1;
-            }
-          }
-          // This is likely call via argument to runtime helper, need do switch
-          if (ForceAOTStackSwitch() && found_global == 0 && did_switch == 0) {
-              // Switch stack
-              BuildMI(MBB, InsertPos, DL, TII.get(RISCV::SD)).addReg(RISCV::X2).addReg(RISCV::X25).addImm(-64);
-              BuildMI(MBB, InsertPos, DL, TII.get(RISCV::LD)).addReg(RISCV::X2).addReg(RISCV::X25).addImm(-56);
-              BuildMI(MBB, InsertPos, DL, TII.get(RISCV::LD)).addReg(RISCV::X4).addReg(RISCV::X25).addImm(-80);
-              // Backup ENV
-              BuildMI(MBB, InsertPos, DL, TII.get(RISCV::SD)).addReg(RISCV::X25).addReg(RISCV::X2).addImm(-8);
-              BuildMI(MBB, InsertPos, DL, TII.get(RISCV::ADDI)).addReg(RISCV::X2).addReg(RISCV::X2).addImm(-16);
-              Changed = true;
-          }
-        } else {
-          // Handle switch from AOT to runtime and without return back (do not backup ENV)
-          for (const MachineOperand &MO : Instr.operands()) {
-            if (MO.isGlobal()) {
-              const Function *Callee = dyn_cast<Function>(MO.getGlobal());
-              if (Callee && Callee->getCallingConv() != CallingConv::QEMUAOT) {
-                BuildMI(MBB, InsertPos, DL, TII.get(RISCV::SD)).addReg(RISCV::X2).addReg(RISCV::X25).addImm(-64);
-                BuildMI(MBB, InsertPos, DL, TII.get(RISCV::LD)).addReg(RISCV::X2).addReg(RISCV::X25).addImm(-56);
-                BuildMI(MBB, InsertPos, DL, TII.get(RISCV::LD)).addReg(RISCV::X4).addReg(RISCV::X25).addImm(-80);
-                Changed = true;
-              }
-            }
-          }
-        }
-        if (!TII.isTailCall(Instr) && MI != ME) {
-          // Handle switch from runtime to AOT
-          InsertPos = MI;
-          DL = MI->getDebugLoc();
-          // Restore ENV
-          BuildMI(MBB, InsertPos, DL, TII.get(RISCV::ADDI)).addReg(RISCV::X2).addReg(RISCV::X2).addImm(16);
-          BuildMI(MBB, InsertPos, DL, TII.get(RISCV::LD)).addReg(RISCV::X25).addReg(RISCV::X2).addImm(-8);
-          // Switch stack
-          BuildMI(MBB, InsertPos, DL, TII.get(RISCV::SD)).addReg(RISCV::X2).addReg(RISCV::X25).addImm(-56);
-          BuildMI(MBB, InsertPos, DL, TII.get(RISCV::LD)).addReg(RISCV::X2).addReg(RISCV::X25).addImm(-64);
-          Changed = true;
-        }
+      if (needsSwitch(Instr)) {
+        if (!shouldReserveAOTEnvRegs(MF))
+          report_fatal_error("Please set flag --qemu-aot-env-reg=aot");
+        emitStackSwitch(MF, MBB, Instr, TII);
+        Changed = true;
       }
     }
   }
