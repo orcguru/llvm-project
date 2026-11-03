@@ -67,19 +67,19 @@ static void emitStackSwitch(const MachineFunction &MF,
   BuildMI(MBB, I, DL, TII.get(RISCV::SD)).addReg(RISCV::X2).addReg(ENV).addImm(-64);
   BuildMI(MBB, I, DL, TII.get(RISCV::LD)).addReg(RISCV::X2, RegState::Define).addReg(ENV).addImm(-56);
   // Reload thread-pointer
-  BuildMI(MBB, I, DL, TII.get(RISCV::LD)).addReg(RISCV::X4).addReg(ENV).addImm(-80);
+  BuildMI(MBB, I, DL, TII.get(RISCV::LD)).addReg(RISCV::X4, RegState::Define).addReg(ENV).addImm(-80);
   // Backup ENV
   BuildMI(MBB, I, DL, TII.get(RISCV::SD)).addReg(ENV).addReg(RISCV::X2).addImm(-8);
-  BuildMI(MBB, I, DL, TII.get(RISCV::ADDI)).addReg(RISCV::X2).addReg(RISCV::X2).addImm(-16);
+  BuildMI(MBB, I, DL, TII.get(RISCV::ADDI)).addReg(RISCV::X2, RegState::Define).addReg(RISCV::X2).addImm(-16);
 
   // ---- the call sits here ----
   if (!TII.isTailCall(CallMI)) {
     // Restore ENV
-    BuildMI(MBB, After, DL, TII.get(RISCV::ADDI)).addReg(RISCV::X2).addReg(RISCV::X2).addImm(16);
-    BuildMI(MBB, After, DL, TII.get(RISCV::LD)).addReg(ENV).addReg(RISCV::X2).addImm(-8);
+    BuildMI(MBB, After, DL, TII.get(RISCV::ADDI)).addReg(RISCV::X2, RegState::Define).addReg(RISCV::X2).addImm(16);
+    BuildMI(MBB, After, DL, TII.get(RISCV::LD)).addReg(ENV, RegState::Define).addReg(RISCV::X2).addImm(-8);
     // Switch stack
     BuildMI(MBB, After, DL, TII.get(RISCV::SD)).addReg(RISCV::X2).addReg(ENV).addImm(-56);
-    BuildMI(MBB, After, DL, TII.get(RISCV::LD)).addReg(RISCV::X2).addReg(ENV).addImm(-64);
+    BuildMI(MBB, After, DL, TII.get(RISCV::LD)).addReg(RISCV::X2, RegState::Define).addReg(ENV).addImm(-64);
   }
 }
 
