@@ -14,6 +14,8 @@ cl::opt<AOTEnvRegMode> llvm::QEMUAOTEnvRegMode(
     cl::init(AOTEnvRegMode::Never));
 
 bool llvm::shouldReserveAOTEnvRegs(const MachineFunction &MF) {
+  if (MF.getName().starts_with("trampoline_"))
+    return true;
   switch (QEMUAOTEnvRegMode) {
   case AOTEnvRegMode::Never:  return false;
   case AOTEnvRegMode::AOTOnly:
