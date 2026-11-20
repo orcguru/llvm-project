@@ -22764,7 +22764,10 @@ RISCVTargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
   CCState CCInfo(CallConv, IsVarArg, DAG.getMachineFunction(), RVLocs,
                  *DAG.getContext());
 
-  analyzeOutputArgs(DAG.getMachineFunction(), CCInfo, Outs, /*IsRet=*/true,
+  if (CallConv == CallingConv::QEMUAOT)
+    CCInfo.AnalyzeReturn(Outs, RetCC_RISCV_QEMUAOT);
+  else
+    analyzeOutputArgs(DAG.getMachineFunction(), CCInfo, Outs, /*IsRet=*/true,
                     nullptr, CC_RISCV);
 
   if (CallConv == CallingConv::GHC && !RVLocs.empty())
