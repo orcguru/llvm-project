@@ -31,11 +31,11 @@ class RISCVTuneInfo {
   bits<32> TailDupAggressiveThreshold = 6;
 
   bits<32> MaxStoresPerMemsetOptSize = 4;
-  bits<32> MaxStoresPerMemset = 8;
+  bits<32> MaxStoresPerMemset = 32;
 
   bits<32> MaxGluedStoresPerMemcpy = 0;
   bits<32> MaxStoresPerMemcpyOptSize = 4;
-  bits<32> MaxStoresPerMemcpy = 8;
+  bits<32> MaxStoresPerMemcpy = 32;
 
   bits<32> MaxStoresPerMemmoveOptSize = 4;
   bits<32> MaxStoresPerMemmove = 8;
